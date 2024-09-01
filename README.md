@@ -90,6 +90,7 @@ plm.Cleanup();
 
 ## Contact
 * PLMCtrl is developed and mantained by José C. A. Rocha
+* This library is actively being developed, so users may encounter some rough edges
 * For any feedback, questions or other enquiries, feel free to contact me at jd964@exeter.ac.uk, or open an issue here on GitHub
 
 
