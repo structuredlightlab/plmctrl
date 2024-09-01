@@ -1,11 +1,10 @@
-addpath('x64/Debug');
-% addpath('../');
+clearvars;
 
-clc
-clear all;
+addpath('../');
+addpath('../libs/')
+
 
 %%
-
 MAX_FRAMES = 12;
 
 % Set monitor size
@@ -15,13 +14,10 @@ M = 1080/8;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
-monitorId = 1;
+
+%% Start the UI
+monitorId = 1; % This parameter is not currently working.
 plm.StartUI(monitorId);
-
-%% Unload the library from MATLAB's memory
-
-plm.Cleanup();
-
 
 %% Modify the Look-Up Table (LUT)
 % By default, it is set to TI's LUT (Texas Instruments)
@@ -143,9 +139,9 @@ plm.SetFrame(0);
 % Assemble the RGB matrix from the hologram matrix
 A = frame';
 RGB = zeros(2*M, 2*N, 3);
-RGB(:,:,1) = A(:,1:4:end);
-RGB(:,:,2) = A(:,2:4:end);
-RGB(:,:,3) = A(:,3:4:end);
+RGB(:,:,1) = A(:,1:3:end);
+RGB(:,:,2) = A(:,2:3:end);
+RGB(:,:,3) = A(:,3:3:end);
 
 % Display the hologram
 figure(1);
@@ -153,3 +149,6 @@ imshow(RGB/255);
 set(gca, 'Position', [0.1, 0.1, 0.8, 0.8])
 
 
+%% Unload the library from MATLAB's memory
+
+plm.Cleanup();
