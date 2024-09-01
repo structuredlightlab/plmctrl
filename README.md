@@ -84,8 +84,9 @@ plm.Cleanup();
 ```
 
 ## External Code/Libraries/used by PLMCtrl
-* Dear ImGUI for GUI handling and wrapping graphics API
-* hidapi for USB communication with the PLM
+* [Dear ImGui](https://github.com/ocornut/imgui) for GUI handling and wrapping graphics API
+* [hidapi](https://github.com/libusb/hidapi) for USB communication with the PLM
+* Microsoft's DirectX 11 as Graphics API
 
 ## Contact
 * PLMCtrl is developed and mantained by José C. A. Rocha
