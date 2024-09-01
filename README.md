@@ -8,7 +8,6 @@
             <a href="https://github.com/structuredlightlab/plmctrl/wiki/Docs">📚 Docs</a> · 
             <a href="https://github.com/structuredlightlab/plmctrl/wiki/Code-and-Compiling">🔄 Compiling</a> · 
             <a href="https://github.com/structuredlightlab/plmctrl/wiki">🌐 Wiki </a>
-
         </p>
         <p align="center">
             <a href="https://github.com/structuredlightlab/plmctrl/wiki/Connection-and-power%E2%80%90up-sequence">⚙️ Configuration and Setup</a> · 
