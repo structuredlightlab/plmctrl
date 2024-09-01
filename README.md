@@ -3,16 +3,16 @@
 <div style="display: flex; align-items: center;">
     <div>
         <p align="center">
-            <a href="https://github.com/Windier/plmctrl/wiki/Getting-Started">🚀 Getting Started</a> · 
-            <a href="https://github.com/Windier/plmctrl/wiki/Docs">📚 Docs</a> · 
-            <a href="https://github.com/Windier/plmctrl/wiki">🌐 Wiki </a> ·  
-            <a href="https://github.com/Windier/plmctrl/wiki/Code-and-Compiling">🔄 Compiling</a>
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/Getting-Started">🚀 Getting Started</a> · 
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/Docs">📚 Docs</a> · 
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki">🌐 Wiki </a> ·  
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/Code-and-Compiling">🔄 Compiling</a>
         </p>
         <p align="center">
-            <a href="https://github.com/Windier/plmctrl/wiki/Connection-and-power%E2%80%90up-sequence">⚙️ Configuration and Setup</a> · 
-            <a href="https://github.com/Windier/plmctrl/wiki/Doing-an-experiment">🧪 Doing an experiment</a> · 
-            <a href="https://github.com/Windier/plmctrl/wiki/LightCrafterDLP900-configuration">💡 LightCrafterDLP900 configuration</a> ·  
-            <a href="https://github.com/Windier/plmctrl?tab=readme-ov-file#contact"> 📧 Contact </a>
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/Connection-and-power%E2%80%90up-sequence">⚙️ Configuration and Setup</a> · 
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/Doing-an-experiment">🧪 Doing an experiment</a> · 
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/LightCrafterDLP900-configuration">💡 LightCrafterDLP900 configuration</a> ·  
+            <a href="https://github.com/structuredlightlab/plmctrl?tab=readme-ov-file#contact"> 📧 Contact </a>
         </p>
     </div>
 </div>
