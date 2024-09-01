@@ -1,6 +1,6 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
- * Maintainer: José C. A. Rocha (email: jd964@exeter.ac.uk)
+ * Maintainer: JosÃ© C. A. Rocha (email: jd964@exeter.ac.uk)
  * Version: 0.1 alpha
  * Date: 01/Sep/2024
  * Repository : https://github.com/structuredlightlab/plmctrl
@@ -8,11 +8,7 @@
  * This file is part of plmctrl, an open-source library for controlling the 0.67" Texas Instruments
  * Phase-only Light Modulator (DLP6750 EVM). The library facilitates the creation, bitpacking, and
  * display of holograms on the PLM, ensuring precise frame pacing during hologram sequence display.
- *
- * Core functionalities include:
- * - Generating and bitpacking 24 holograms into a single RGB frame.
- * - Displaying holograms via HDMI or DisplayPort, with support for frame rates up to 1440 Hz.
- 
+
  * If you use plmctrl in your research, please cite:
  * @article{joserocha,
  *     title         = {Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator},
@@ -26,7 +22,7 @@
  * }
  *
  * External Dependencies:
- * - Dear ImGUI: GUI handling and graphics API wrapping
+ * - Dear ImGui: GUI handling and graphics API wrapping
  * - hidapi: USB communication with the PLM
  */
 
