@@ -28,8 +28,6 @@
  * External Dependencies:
  * - Dear ImGUI: GUI handling and graphics API wrapping
  * - hidapi: USB communication with the PLM
- *
- * Maintainer: José C. A. Rocha (jd964@exeter.ac.uk)
  */
 
 #include "imgui/imgui.h"
