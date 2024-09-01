@@ -5,7 +5,7 @@
  * Date: 01/Sep/2024
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
- * This file is part of plmctrl, an open-source library for controlling the 0.67" Texas Instruments
+ * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
  * Phase-only Light Modulator (DLP6750 EVM). The library facilitates the creation, bitpacking, and
  * display of holograms on the PLM, ensuring precise frame pacing during hologram sequence display.
 
