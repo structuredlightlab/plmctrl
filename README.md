@@ -1,5 +1,6 @@
 # <img src="https://github.com/user-attachments/assets/38bb9f3a-5c2b-4155-9335-3d829c6316a8" alt="logo" width="24"/> PLMCtrl 
-
+![Warning](https://img.shields.io/badge/under%20development%20-yellow)
+![Warning](https://img.shields.io/badge/version-0.1a-red)
 <div style="display: flex; align-items: center;">
     <div>
         <p align="center">
@@ -79,7 +80,6 @@ plm.SetHologramSequence(0:MAX_FRAMES-1);  % Set to display the bitpacked hologra
 plm.StartSequence(MAX_FRAMES);  % Display MAX_HOLOGRAMS hologram in a sequence following the sequence
 
 % When you're done:
-plm.StopUI();
 plm.Cleanup();
 ```
 
@@ -88,7 +88,6 @@ plm.Cleanup();
 * hidapi for USB communication with the PLM
 
 ## Contact
-
 * PLMCtrl is developed and mantained by José C. A. Rocha
 * For any feedback, questions or other enquiries, feel free to contact me at jd964@exeter.ac.uk, or open an issue here on GitHub
 
