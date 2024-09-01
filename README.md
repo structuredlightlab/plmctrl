@@ -12,9 +12,7 @@
    <a href="https://github.com/Windier/plmctrl/wiki/Code-and-Compiling">🔄 Compiling</a> · 
    <a href="https://github.com/Windier/plmctrl/wiki/LightCrafterDLP900-configuration">💡 LightCrafterDLP900 configuration</a> 
 <p>
-
-
-
+<img src="https://github.com/user-attachments/assets/983ca1fc-07a2-4e17-a60a-57ec77a5ee70" alt="mirrors_low" style="width: 100%; margin-right: 20px;">
 ```plmctrl``` is an open source library for controlling the 0.67" (DLP6750 EVM) Texas-Instruments Phase-only Light Modulator (PLM). This library is a C++/OpenGL code that handles the whole process from a matrix of ***continous phase values*** → ***prepare the hologram*** → ***display the hologram on the screen***. When displaying different holograms in a sequence, frame-pacing is also ensured.
 
 If you have used ```plmctrl``` in a scientific publication, we would appreciate citation to the following reference:
