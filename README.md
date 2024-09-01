@@ -1,5 +1,6 @@
 # <img src="https://github.com/user-attachments/assets/38bb9f3a-5c2b-4155-9335-3d829c6316a8" alt="logo" width="24"/> PLMCtrl 
 ![Warning](https://img.shields.io/badge/under%20development%20-yellow)
+[![arXiv](https://img.shields.io/badge/arXiv-<INDEX>-<COLOR>.svg)](https://arxiv.org/abs/<INDEX>)
 ![Warning](https://img.shields.io/badge/version-0.1a-red)
 <div style="display: flex; align-items: center;">
     <div>
