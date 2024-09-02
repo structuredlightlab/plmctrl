@@ -11,9 +11,8 @@
             <a href="https://github.com/structuredlightlab/plmctrl/wiki">🌐 Wiki </a>
         </p>
         <p align="center">
-            <a href="https://github.com/structuredlightlab/plmctrl/wiki/Connection-and-power%E2%80%90up-sequence">⚙️ Configuration and Setup</a> · 
             <a href="https://github.com/structuredlightlab/plmctrl/wiki/Doing-an-experiment">🧪 Doing an experiment</a> · 
-            <a href="https://github.com/structuredlightlab/plmctrl/wiki/LightCrafterDLP900-configuration">💡 LightCrafterDLP900 configuration</a> ·  
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/LightCrafterDLP900-configuration">⚙️ LightCrafterDLP900 configuration</a> ·  
             <a href="https://github.com/structuredlightlab/plmctrl?tab=readme-ov-file#contact"> 📧 Contact </a>
         </p>
     </div>
