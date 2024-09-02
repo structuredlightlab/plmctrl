@@ -38,7 +38,7 @@ If you have used ```plmctrl``` in a scientific publication, we would appreciate 
 ```
 
 The Texas Instruments Phase-only Light Modulator is a MEMS-based Spatial Light Modulator. It's an array of µ-mirrors that electrostatically piston up and down and can change the phase of the reflected light on a pixel-by-pixel basis. 
-There are three PLM models out there, with diagonal screen sizes of 0.47", 0.67", and 0.98". Here I'm providing supporting code for the 0.67" PLM Evaluation Module (EVM).
+There are three PLM models out there, with diagonal screen sizes of 0.47", 0.67", and 0.98". Here we are providing supporting code for the 0.67" PLM Evaluation Module (EVM).
 
 The PLM builds on top of existing DLP technology, and the 0.67" PLM (DLP6750 EVM) is driven by TI's [DLP670S](https://www.ti.com/product/DLP670S) board and contains an array of 1358 x 800 µ-mirrors that pistons at 16 different heights. The PLM can reconfigure the heights of all mirrors at rates up to 1440 Hz.
 While DLP670S has some internal flash memory to store and display a few holograms, it's usually not enough for a whole optics experiment, so, the main way of using this PLM is through a video interface. Here, we provide code for using the PLM through its video interface. We provide functions for creating the holograms, bitpacking 24 holograms into a single frame, displaying that frame to the PLM screen, and changing that frame without frame-drops to ensure maximum hologram-rate.
