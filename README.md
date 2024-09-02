@@ -1,4 +1,5 @@
-# <img src="https://github.com/user-attachments/assets/38bb9f3a-5c2b-4155-9335-3d829c6316a8" alt="logo" width="24"/> PLMCtrl 
+# <img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl 
+
 ![Warning](https://img.shields.io/badge/under%20development%20-yellow)
 [![arXiv](https://img.shields.io/badge/arXiv-<INDEX>-<COLOR>.svg)](https://arxiv.org/abs/<INDEX>)
 ![Warning](https://img.shields.io/badge/version-0.1a-red)
@@ -17,7 +18,8 @@
         </p>
     </div>
 </div>
-<img src="https://github.com/user-attachments/assets/983ca1fc-07a2-4e17-a60a-57ec77a5ee70" alt="mirrors_low" style="width: 100%; margin-right: 20px;">
+
+<img src="https://github.com/user-attachments/assets/617a1f9a-7be8-4c00-a289-ed66f41fd31b" alt="mirrors_low" style="width: 100%; margin-right: 20px;">
 
 ```plmctrl``` is an open source library for controlling the 0.67" (DLP6750 EVM) Texas-Instruments Phase-only Light Modulator (PLM). This library is a C++/DirectX code that handles the whole process from a matrix of ***continous phase values*** → ***prepare the hologram*** → ***display the hologram on the screen***. When displaying different holograms in a sequence, frame-pacing is also ensured.
 
