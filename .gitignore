@@ -36,3 +36,9 @@
 /.vs
 /x64
 /plmctrl
+
+# LightCrafter wrappers
+/include/PLM/API*
+/include/PLM/common.h
+/include/PLM/usb*
+

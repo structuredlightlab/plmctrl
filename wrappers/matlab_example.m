@@ -3,14 +3,13 @@ clearvars;
 addpath('../');
 addpath('../libs/')
 
-
 %%
 MAX_FRAMES = 12;
 
 % Set monitor size
 % PLM is N = 1358 by M = 800
-N = 1920/8;
-M = 1080/8;
+N = 1920/4;
+M = 1080/4;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
@@ -27,7 +26,8 @@ plm.SetLookupTable(phase_levels);
 
 %% Simple test: Inserts a random hologram into the sequence
 % Create a random frame (bitpacked holograms)
-frame =  randi(255,3*2*N, 2*M, 'uint8');
+frame =  randi(255,4*2*N, 2*M, 'uint8');
+frame(4:4:end, :) = 255; % Set the alpha as max
 % Set the hologram to be displayed
 offset = 0;
 plm.InsertFrames(frame, offset)
@@ -35,7 +35,7 @@ plm.InsertFrames(frame, offset)
 %% Inserts a set of frames into the sequence
 % Create a random frame (bitpacked holograms)
 num_frames = 10;
-frames =  randi(255,3*2*N, 2*M, num_frames, 'uint8');
+frames =  randi(255,4*2*N, 2*M, num_frames, 'uint8');
 % Set the hologram to be displayed
 offset = 0;
 plm.InsertFrames(frames, offset)
@@ -88,7 +88,7 @@ wedge = @(alpha, beta) alpha*x + beta*y;
 % Generate multiple holograms
 numHolograms = 24;
 phase = zeros(N, M, numHolograms);
-frame_set = zeros(3*2*N, 2*M, MAX_FRAMES, 'uint8');
+frame_set = zeros(4*2*N, 2*M, MAX_FRAMES, 'uint8');
 
 for j = 1:MAX_FRAMES
     fprintf("MATLAB: Generating bitpacked hologram #%d\n",j);
@@ -133,15 +133,21 @@ offset = 0;
 plm.InsertFrames(frame, offset);
 plm.SetFrame(0);
 
+% %% Command the PLM to start the sequencer 
+% (Not yet implemented in the wrapper)
+% plm.Play();
+% %% Command the PLM to stop the sequencer
+% (Not yet implemented in the wrapper)
+% plm.Pause();
 
 %% Visualize the hologram. 
-% MATLAB figure and the second screen should match or I've done something wrong
+% This MATLAB figure and the second screen should match or I've done something wrong
 % Assemble the RGB matrix from the hologram matrix
 A = frame';
 RGB = zeros(2*M, 2*N, 3);
-RGB(:,:,1) = A(:,1:3:end);
-RGB(:,:,2) = A(:,2:3:end);
-RGB(:,:,3) = A(:,3:3:end);
+RGB(:,:,1) = A(:,1:4:end);
+RGB(:,:,2) = A(:,2:4:end);
+RGB(:,:,3) = A(:,3:4:end);
 
 % Display the hologram
 figure(1);
@@ -149,6 +155,5 @@ imshow(RGB/255);
 set(gca, 'Position', [0.1, 0.1, 0.8, 0.8])
 
 
-%% Unload the library from MATLAB's memory
-
+%% Close the UI and Unload the library from MATLAB's memory 
 plm.Cleanup();

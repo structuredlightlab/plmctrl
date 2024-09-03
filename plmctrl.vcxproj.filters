@@ -69,6 +69,18 @@
     <ClInclude Include="include\PLM\PLM.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\PLM\API.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\PLM\common.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\PLM\usb.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\helpers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="plmctrl.cpp">
@@ -102,6 +114,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="include\imgui\imgui_tables.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="include\PLM\API.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="include\PLM\usb.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

@@ -1,8 +1,8 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Maintainer: José C. A. Rocha (email: jd964@exeter.ac.uk)
- * Version: 0.1 alpha
- * Date: 01/Sep/2024
+ * Version: 0.1.1 alpha
+ * Date: 03/Sep/2024
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
@@ -26,6 +26,10 @@
  * - hidapi: USB communication with the PLM
  */
 
+
+ // To be defined if compiled as an executable
+// #define PLM_DEBUG
+
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
 #include "imgui/imgui_impl_dx11.h"
@@ -47,6 +51,9 @@
 #include "PLM/PLM.h"
 #include "plmctrl.h"
 
+#include "helpers.h"
+
+
 
 // DirectX Stuff
 static ID3D11Device* g_pd3dDevice = nullptr;
@@ -55,25 +62,19 @@ static IDXGISwapChain* g_pSwapChain = nullptr;
 static bool g_SwapChainOccluded = false;
 static UINT g_ResizeWidth = 0, g_ResizeHeight = 0;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
-
 ID3D11Texture2D* pTexture = nullptr;
 ID3D11ShaderResourceView* data_texture_srv = nullptr;
 D3D11_TEXTURE2D_DESC desc = {};
 
-std::mutex mutex;
 
 bool running = false;
 bool isSetupDone = false;
 uint8_t* plm_image_ptr = nullptr;
+std::mutex mutex;
 std::mutex plm_image_mutex;
 int N = 128, M = 128, monitor_id = 0;
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
-
-
-// PLM Specific // THIS ONLY WORKS IN plmctrl's dev branch
-char versionStr[255];
-unsigned int API_ver, App_ver, SWConfig_ver, SeqConfig_ver;
 
 enum PLM_MODE {
 	PLM_IDLE = 0,
@@ -82,7 +83,6 @@ enum PLM_MODE {
 };
 
 PLM_MODE plm_mode = PLM_IDLE;
-
 bool plm_connected = false;
 int frames_to_play = 0;
 int frames_in_sequence = -1;
@@ -98,11 +98,11 @@ long long t0 = 0;
 bool camera_trigger = false;
 bool show_debug_window = true;
 
-UINT msg_debug = 0;
-
+std::chrono::duration<double> elapsed_content;
+std::chrono::duration<double> elapsed_buffer;
+std::chrono::duration<double> elapsed_total;
 
 unsigned int MAX_FRAMES = 48;
-
 std::vector<uint8_t> frame_set;
 std::vector<uint64_t> frame_order;
 
@@ -137,54 +137,7 @@ void CreateRenderTarget();
 void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-long long GetT0() {
-	return t0;
-}
-
-long int QueryBufferIndex() {
-	return buffer_index;
-}
-
-int QueryPLMMode() {
-	return (int)plm_mode;
-}
-
-bool QueryCameraTrigger() {
-	return camera_trigger;
-}
-
-int QueryHologramInSequence() {
-	return frames_in_sequence;
-}
-
-void Status(bool indicator, bool same_line = true) {
-	const ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoPicker |
-		ImGuiColorEditFlags_NoOptions |
-		ImGuiColorEditFlags_NoInputs |
-		ImGuiColorEditFlags_NoTooltip |
-		ImGuiColorEditFlags_NoLabel |
-		ImGuiColorEditFlags_NoSidePreview |
-		ImGuiColorEditFlags_NoDragDrop;
-	static float green[3] = { 0.0f, 1.0f, 0.0f };
-	static float red[3] = { 1.0f, 0.0f, 0.0f };
-	ImVec2 pos = ImGui::GetCursorScreenPos();
-	ImGui::ColorEdit3("status##", indicator ? green : red, flags);
-	//ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + 2), ImVec2(pos.x + 10, pos.y + 12), indicator ? green : red);
-	//ImGui::Text(" ");
-	if (same_line) ImGui::SameLine();
-};
-
-void Bit(bool indicator, bool same_line = false) {
-	ImU32 green = IM_COL32(0, 255, 0, 255);
-	ImU32 red = IM_COL32(255, 0, 0, 255);
-	ImU32 blue = IM_COL32(0, 0, 255, 255);
-	ImU32 grey = IM_COL32(120, 120, 120, 255);
-	ImU32 yellow = IM_COL32(255, 255, 0, 255);
-	ImVec2 pos = ImGui::GetCursorScreenPos();
-	ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + 2), ImVec2(pos.x + 10, pos.y + 12), indicator ? yellow : grey);
-	ImGui::Text(" ");
-	if (same_line) ImGui::SameLine();
-}
+void DebugWindow(bool show, ImGuiIO& io);
 
 bool Cleanup() {
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -206,43 +159,6 @@ bool StartSequence(int number_of_frames) {
 	return true;
 }
 
-// Struct to hold the index and the monitor RECT together
-struct MonitorData {
-	int monitorIndex;
-	RECT monitorRect;
-};
-
-// Function to find the second monitor
-bool GetSecondMonitorRect(RECT& rect)
-{
-	MonitorData data = { 0, {0, 0, 0, 0} };
-	bool foundSecondMonitor = false;
-
-	EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData) -> BOOL
-		{
-			MonitorData* monitorData = reinterpret_cast<MonitorData*>(dwData);
-			MONITORINFO monitorInfo;
-			monitorInfo.cbSize = sizeof(MONITORINFO);
-			if (GetMonitorInfo(hMonitor, &monitorInfo))
-			{
-				if (monitorData->monitorIndex == 1)  // We're looking for the second monitor (index 1)
-				{
-					monitorData->monitorRect = monitorInfo.rcMonitor;
-					return FALSE;  // Stop enumeration after finding the second monitor
-				}
-				monitorData->monitorIndex++;
-			}
-			return TRUE;  // Continue enumeration
-		}, reinterpret_cast<LPARAM>(&data));
-
-	if (data.monitorIndex == 1)  // Ensure that the second monitor was found
-	{
-		rect = data.monitorRect;
-		foundSecondMonitor = true;
-	}
-	return foundSecondMonitor;
-}
-
 // Main code
 int UI()
 {
@@ -261,8 +177,8 @@ int UI()
 	HWND hwnd = ::CreateWindowEx(
 		WS_EX_TOPMOST, // dwExStyle: No extended styles
 		wc.lpszClassName,
-		L"plmctrl DirectX11 version",
-		WS_POPUP  | WS_VISIBLE,
+		L"plmctrl",
+		WS_POPUP | WS_VISIBLE,
 		monitorRect.left, monitorRect.top,
 		monitorRect.right - monitorRect.left, monitorRect.bottom - monitorRect.top,
 		nullptr,
@@ -315,7 +231,6 @@ int UI()
 
 	// Our state
 	bool show_demo_window = false;
-	bool show_demo_plot_window = false;
 	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 	ImGuiMouseButton LMB = ImGuiMouseButton_Left;
 
@@ -328,10 +243,9 @@ int UI()
 	timepoint end_total;
 	timepoint start;
 	timepoint end;
-	std::chrono::duration<double> elapsed_content;
-	std::chrono::duration<double> elapsed_buffer;
-	std::chrono::duration<double> elapsed_total;
 
+
+	// Frame texture (holds the bitpacked holograms)
 	desc.Width = 2 * N;
 	desc.Height = 2 * M;
 	desc.MipLevels = 1;
@@ -346,27 +260,17 @@ int UI()
 	g_pd3dDevice->CreateShaderResourceView(pTexture, nullptr, &data_texture_srv);
 
 
-
-	//g_pSwapChain->SetFullscreenState(TRUE, nullptr);
-
-	//DXGI_MODE_DESC modeDesc = {};
-	//modeDesc.Width = monitorRect.right - monitorRect.left;
-	//modeDesc.Height = monitorRect.bottom - monitorRect.top;
-	//modeDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	////modeDesc.RefreshRate.Numerator = 100;
-	////modeDesc.RefreshRate.Denominator = 1;
-	//g_pSwapChain->ResizeTarget(&modeDesc);
-
-
 	timepoint now;
 	bool done = false;
+	// Main UI loop. Changes the frames with VSync enabled
 	while (running && !done)
 	{
 
 		if (frames_to_play < 0 && sequence_active) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-			// Pause Playing the sequence // THIS ONLY WORKS IN THE plmctrl's dev branch
-			// if (plm_connected)  LCR_PatternDisplay(0x1);
+			// Pause Playing the sequence.
+
+			if (plm_connected)  PLM::Stop(); // This only works with INCLUDE_LIGHTCRAFTER_WRAPPERS is defined
 			plm_is_displaying = false;
 			sequence_active = false;
 
@@ -375,7 +279,7 @@ int UI()
 
 			camera_trigger = false;
 
-			std::cout << "Sequence ended" << std::endl;
+			std::cout << "Sequence finished" << std::endl;
 		};
 
 
@@ -394,7 +298,9 @@ int UI()
 			//std::cout << msg.message << std::endl;
 			if (msg.message == WM_QUIT)
 				done = true;
-		}
+		};
+
+
 		if (done)
 			break;
 
@@ -414,7 +320,6 @@ int UI()
 			g_ResizeWidth = g_ResizeHeight = 0;
 			CreateRenderTarget();
 		}
-
 
 		// Start the Dear ImGui frame
 		ImGui_ImplDX11_NewFrame();
@@ -440,13 +345,12 @@ int UI()
 		window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
 		bool popen = true;
-		ImGui::Begin("DockSpace Demo", &popen, window_flags);
+		ImGui::Begin("DockSpace", &popen, window_flags);
 		ImGui::PopStyleVar(2);
 		ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 		ImGui::End();
 
-		uint64_t frame_elements = 3 * (2 * N) * (2 * M);
-
+		static uint64_t frame_elements = 4 * (2 * N) * (2 * M);
 		if (frames_to_play == frames_in_sequence && sequence_active) {
 			plm_mode = PLM_PLAYING;
 			frame_index = 0;
@@ -457,97 +361,12 @@ int UI()
 		plm_image_ptr = frame_set.data()
 			+ frame_order[frame_index % MAX_FRAMES] * frame_elements;
 
+		// PLM frame window
 		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
 
-		ImVec2 pos = viewport->WorkPos;
 		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
 
-		if (show_debug_window) {
-			ImGui::Begin("Debug Panel DirectX");
-
-			ImGui::SeparatorText("Warning");
-			
-			ImGui::Text("- This version does not support commanding the PLM to Play/Stop the sequence display");
-			ImGui::Text("- To enable this feature, follow the Wiki entry on this topic");
-	
-
-			//ImGui::Text("Number of monitors detected: %d", count);
-			//for (int i = 0; i < count; i++) {
-			//	Status(i == monitor_id);
-			//	//ImGui::Text("monitor_id %d: %s", i, glfwGetMonitorName(monitors[i]));
-			//};
-			//if (ImGui::Button("Reset Monitor")) {
-			//	DXGI_MODE_DESC modeDesc = {};
-			//	modeDesc.Width = monitorRect.right - monitorRect.left;
-			//	modeDesc.Height = monitorRect.bottom - monitorRect.top;
-			//	modeDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-			//	modeDesc.RefreshRate.Numerator = 100;
-			//	modeDesc.RefreshRate.Denominator = 1;
-			//	g_pSwapChain->ResizeTarget(&modeDesc);
-			//};
-			//if (ImGui::Button("Fullscreen")) {
-			//	g_pSwapChain->SetFullscreenState(TRUE, nullptr);
-			//};
-
-			ImGui::Text("Frametime %f ms (%f FPS)", 1000.0 * io.DeltaTime, io.Framerate);
-			ImGui::SeparatorText("PLM Status");
-			// THIS ONLY WORKS IN THE plmctrl's dev branch
-			//if (USB_IsConnected() == false)
-			//{
-			//	USB_Open();
-			//	LCR_GetVersion(&App_ver, &API_ver, &SWConfig_ver, &SeqConfig_ver);
-			//};
-			Status(plm_connected);
-			//plm_connected = USB_IsConnected();
-			ImGui::Text("%d.%d.%d", (App_ver >> 24), ((App_ver << 8) >> 24), ((App_ver << 16) >> 16));
-			plm_connected = false;
-			ImGui::BeginDisabled(!plm_connected);
-			Status(plm_is_displaying);
-			if (ImGui::Button("Start")) {
-				//LCR_PatternDisplay(0x2); // THIS ONLY WORKS IN THE plmctrl's dev branch
-				plm_is_displaying = true;
-			};
-			ImGui::SameLine();
-			if (ImGui::Button("Stop")) {
-				//LCR_PatternDisplay(0x1); // THIS ONLY WORKS IN THE plmctrl's dev branch
-				plm_is_displaying = false;
-			};
-			ImGui::EndDisabled();
-			ImGui::Separator();
-			Status(first_frame_trigger);
-			//ImGui::SliderInt("Delay", &delay, 0, 100);
-			ImGui::Text("Frames to play: %d/%d", frames_to_play, frames_in_sequence);
-			ImGui::Text("Buffer Index %d/%d", buffer_index, 24*frames_in_sequence);
-			ImGui::Text("Frame pointer [%p]", plm_image_ptr);
-			ImGui::Text("Frame index: [%d]", frame_index % MAX_FRAMES);
-			// Display frame_order array
-			ImGui::Text("Frame order:");
-			ImGui::SameLine();
-			ImGui::Text("[");
-			ImGui::SameLine();
-			for (int i = 0; i < (MAX_FRAMES <= 4 ? (MAX_FRAMES - 1) : 4); ++i) {
-				ImGui::Text("%llu", frame_order[i]);
-				ImGui::SameLine();
-			};
-			ImGui::Text("... %llu], total: %d", frame_order[MAX_FRAMES - 1], MAX_FRAMES);
-			ImGui::PlotLines("LUT", phases, 17);
-			ImGui::Separator();
-			ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
-			ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
-			ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
-
-			// Display phase_map
-			if (ImGui::TreeNode("Phase map [0...15]: ")) {
-
-				for (int j = 0; j < 4; j++) {
-					for (int i = 0; i < 16; i++) {
-						Bit(phase_map[i * 4 + j], i < 15);
-					};
-				};
-				ImGui::TreePop();
-			}
-			ImGui::End();
-		}
+		DebugWindow(show_debug_window, io);
 
 		// ImGui Rendering
 		ImGui::Render();
@@ -569,26 +388,22 @@ int UI()
 		HRESULT hr = g_pSwapChain->Present(1, 0);   
 		g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
 
-
 		end = std::chrono::high_resolution_clock::now();
 		elapsed_content = end - start;
-
 		start = std::chrono::high_resolution_clock::now();
-
 		buffer_index = camera_trigger ? buffer_index + 1 : -1;
+
 
 		if (plm_mode == PLM_PLAYING && frames_to_play == frames_in_sequence) {
 			camera_trigger = true;
 			buffer_index = 0;
-			// LCR_PatternDisplay(0x2);  // THIS ONLY WORKS IN THE plmctrl's dev branch
-			now = std::chrono::high_resolution_clock::now();
 			t0 = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
-			std::cout << "FIRST FRAME ON PLM" << std::endl;
+			std::cout << "FIRST FRAME TRIGGER" << std::endl;
+			PLM::Play(); // This only works if LightCrafter wrappers are included
+
 		};
 		if (plm_mode == PLM_PLAYING) {
 			std::cout << "Buffer Index on plmctrl: " << buffer_index << std::endl;
-			now = std::chrono::high_resolution_clock::now();
-			std::cout << "plmctrl time: " << std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count()-t0<< " microseconds" << std::endl;
 		}
 
 		end = std::chrono::high_resolution_clock::now();
@@ -597,8 +412,7 @@ int UI()
 		end_total = std::chrono::high_resolution_clock::now();
 		elapsed_total = end_total - start_total;
 
-		// first_frame_trigger is a variable to make sure that the UI is displaying the first 
-		// hologram in the sequence before sending the PLM the trigger commands.
+		// first_frame_trigger is a variable to know exactly that the first frame was already sent to the GPU buffer queue. 
 		if (frames_to_play >= 0 && !(first_frame_trigger)) {
 			frame_index++;
 			frames_to_play--;
@@ -637,12 +451,16 @@ void StartUI(unsigned int number_of_frames) {
 	running = true;
 	plm_image_ptr = nullptr;
 
-	frame_set.resize(3 * (2 * N) * (2 * M) * MAX_FRAMES);
+	frame_set.resize(4 * (2 * N) * (2 * M) * MAX_FRAMES);
 	std::fill(frame_set.begin(), frame_set.end(), 255);
 
 	frame_order.resize(MAX_FRAMES);
 
+#ifndef PLM_DEBUG
 	ui_thread = std::thread(UI);
+#else
+	UI();
+#endif
 
 	return;
 }
@@ -701,10 +519,6 @@ bool SetFrameSequence(unsigned long long* sequence, unsigned long long length) {
 	return true;
 };
 
-//bool PlayOnce() {
-//	return false;
-//};
-
 bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, unsigned long long offset = 0) {
 
 	if (offset + num_frames > MAX_FRAMES) {
@@ -712,15 +526,18 @@ bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, uns
 		return false;
 	};
 
-	uint64_t frame_elements = 3 * (2 * N) * (2 * M);
+	std::cout << "Inserting " << num_frames << " frames at offset " << offset << std::endl;
 
-	for (uint64_t n = 0; n < num_frames; n++) {
-		for (uint64_t i = 0; i < frame_elements; i++) {
-			frame_set.at(i + (n + offset) * frame_elements) =
-				frame[i + n * frame_elements];
-		};
-		std::cout << "Frame " << n << " inserted" << std::endl;
-	};
+	uint64_t frame_elements = 4 * (2 * N) * (2 * M);
+	uint64_t total_elements = num_frames * frame_elements;
+
+	frame_set.insert(
+		frame_set.begin() + offset * frame_elements,
+		frame,
+		frame + total_elements
+	);
+
+	std::cout << num_frames << " frames inserted" << std::endl;
 
 	return true;
 };
@@ -748,7 +565,7 @@ bool GrabPLMFrame(unsigned char* hologram, uint64_t index = 0) {
 		return false;
 	};
 
-	uint64_t frame_elements = 3 * (2 * N) * (2 * M);
+	uint64_t frame_elements = 4 * (2 * N) * (2 * M);
 	uint64_t ptr_offset = index * frame_elements;
 
 	for (uint64_t i = 0; i < frame_elements; i++) {
@@ -799,18 +616,24 @@ bool BitpackHolograms(
 				// Quantize the phase values
 				level = QuantisePhase(phase[i + j * N + n * phase_elements]);
 				// Encode the phase values into the hologram
-				hologram[3 * (2 * i + 0) + (2 * j + 1) * (3 * 2 * N) + color_id] |= phase_map[level * 4 + 0] << offset;
-				hologram[3 * (2 * i + 0) + (2 * j + 0) * (3 * 2 * N) + color_id] |= phase_map[level * 4 + 1] << offset;
-				hologram[3 * (2 * i + 1) + (2 * j + 1) * (3 * 2 * N) + color_id] |= phase_map[level * 4 + 2] << offset;
-				hologram[3 * (2 * i + 1) + (2 * j + 0) * (3 * 2 * N) + color_id] |= phase_map[level * 4 + 3] << offset;
+				hologram[4 * (2 * i + 0) + (2 * j + 1) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 0] << offset;
+				hologram[4 * (2 * i + 0) + (2 * j + 0) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 1] << offset;
+				hologram[4 * (2 * i + 1) + (2 * j + 1) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 2] << offset;
+				hologram[4 * (2 * i + 1) + (2 * j + 0) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 3] << offset;
 
+
+				hologram[4 * (2 * i + 0) + (2 * j + 1) * (4 * 2 * N) + 3] = 255;
+				hologram[4 * (2 * i + 0) + (2 * j + 0) * (4 * 2 * N) + 3] = 255;
+				hologram[4 * (2 * i + 1) + (2 * j + 1) * (4 * 2 * N) + 3] = 255;
+				hologram[4 * (2 * i + 1) + (2 * j + 0) * (4 * 2 * N) + 3] = 255;
 			};
 		};
 		holo++;
 	}
 
 	return true;
-}
+};
+
 
 // Helper functions
 bool CreateDeviceD3D(HWND hWnd)
@@ -837,6 +660,8 @@ bool CreateDeviceD3D(HWND hWnd)
 	D3D_FEATURE_LEVEL featureLevel;
 	const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
 	HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
+	
+	printf("D3D11CreateDeviceAndSwapChain: x%8x\n", res);
 	if (res == DXGI_ERROR_UNSUPPORTED) // Try high-performance WARP software driver if hardware is not available.
 		res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
 	if (res != S_OK)
@@ -872,10 +697,6 @@ void CleanupRenderTarget()
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // Win32 message handler
-// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
-// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
-// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
-// Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
@@ -883,7 +704,6 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	switch (msg)
 	{
-		msg_debug = msg;
 	case WM_SIZE:
 		if (wParam == SIZE_MINIMIZED)
 			return 0;
@@ -910,3 +730,87 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	}
 	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 }
+
+void DebugWindow(
+	bool show,
+	ImGuiIO& io
+) {
+
+	if (!show) return;
+
+	ImGui::Begin("PLM Debug Panel");
+	ImGui::Text("Frametime %f ms (%f Hz)", 1000.0 * io.DeltaTime, io.Framerate);
+	ImGui::Text("Framerate needs to match PLM's");
+
+
+#ifndef INCLUDE_LIGHTCRAFTER_WRAPPERS
+	ImGui::SeparatorText("Warning");
+	ImGui::Text("- This version does not support commanding the PLM to Play/Stop the sequence display");
+	ImGui::Text("- To enable this feature, follow the Wiki entry on this topic");
+	ImGui::Separator();
+#else
+	ImGui::SeparatorText("PLM Status");
+	if (PLM::IsConnected() == false) {
+		PLM::Open();
+		PLM::GetVersion();
+	};
+	Status(plm_connected);
+	plm_connected = PLM::IsConnected();
+	ImGui::Text("%d.%d.%d", (PLM::App_ver >> 24), ((PLM::App_ver << 8) >> 24), ((PLM::App_ver << 16) >> 16));
+	ImGui::BeginDisabled(!plm_connected);
+	Status(plm_is_displaying);
+	if (ImGui::Button("Start")) {
+		PLM::Play();
+		plm_is_displaying = true;
+	};
+	ImGui::SameLine();
+	if (ImGui::Button("Stop")) {
+		PLM::Stop();
+		plm_is_displaying = false;
+	};
+	ImGui::EndDisabled();
+	ImGui::Separator();
+#endif
+
+
+	//Status(first_frame_trigger);
+	ImGui::Text("Frames to play: %d/%d", frames_to_play, frames_in_sequence);
+	ImGui::Text("Buffer Index %d/%d", buffer_index, 24 * frames_in_sequence);
+	ImGui::Text("Frame pointer [%p]", plm_image_ptr);
+	ImGui::Text("Frame index: [%d]", frame_index % MAX_FRAMES);
+	// Display frame_order array
+	ImGui::Text("Frame order:");
+	ImGui::SameLine();
+	ImGui::Text("[");
+	ImGui::SameLine();
+	for (int i = 0; i < (MAX_FRAMES <= 4 ? (MAX_FRAMES - 1) : 4); ++i) {
+		ImGui::Text("%llu", frame_order[i]);
+		ImGui::SameLine();
+	};
+	ImGui::Text("... %llu], total: %d", frame_order[MAX_FRAMES - 1], MAX_FRAMES);
+	ImGui::PlotLines("LUT", phases, 17);
+	ImGui::Separator();
+	ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
+	ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
+	ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
+
+	// Display phase_map
+	if (ImGui::TreeNode("Phase map [0...15]: ")) {
+
+		for (int j = 0; j < 4; j++) {
+			for (int i = 0; i < 16; i++) {
+				Bit(phase_map[i * 4 + j], i < 15);
+			};
+		};
+		ImGui::TreePop();
+	}
+	ImGui::End();
+};
+
+#ifdef PLM_DEBUG
+int main(){
+	
+	StartUI(48);
+	return 0;
+}
+#endif

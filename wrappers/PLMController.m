@@ -10,7 +10,7 @@ function plm = PLMController(MAX_FRAMES, width, height)
     %   - MAX_FRAMES: The maximum number of frames that the PLM can handle.
     %   - width: Width of the PLM display in pixels. 
     %   - height: Height of the PLM display in pixels.
-    %     (0.67" is 1358 x 800 (w,h)
+    %     0.67" PLM is 1358 x 800 (w,h)
     % Outputs:
     %   - plm: A structure containing PLM control methods and properties.
 
@@ -45,12 +45,12 @@ function plm = PLMController(MAX_FRAMES, width, height)
         calllib('plmctrl', 'StartUI', plm.MAX_FRAMES);
     end
 
-    function InsertFrames(frames, offset)
+    function res = InsertFrames(frames, offset)
         validateattributes(frames, {'uint8'}, {'3d'});
         validateattributes(offset, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
         
         % Insert the holograms into the PLM at the specified offset
-        calllib('plmctrl', 'InsertPLMFrame', libpointer('uint8Ptr', frames), size(frames, 3), offset);
+        res = calllib('plmctrl', 'InsertPLMFrame', libpointer('uint8Ptr', frames), size(frames, 3), offset);
     end
 
     function SetFrameSequence(sequence)
@@ -78,9 +78,9 @@ function plm = PLMController(MAX_FRAMES, width, height)
         calllib('plmctrl', 'SetPLMFrame', frame);
     end
 
-    function SetPhaseMap(phase_map)
+    function res = SetPhaseMap(phase_map)
         validateattributes(phase_map, {'numeric'}, {'2d', 'integer'});
-        calllib('plmctrl', 'SetPhaseMap', libpointer('int32Ptr', transpose(phase_map)));
+        res = calllib('plmctrl', 'SetPhaseMap', libpointer('int32Ptr', transpose(phase_map)));
     end
 
     % Function to create and bit-pack holograms from phase data
@@ -88,7 +88,7 @@ function plm = PLMController(MAX_FRAMES, width, height)
         validateattributes(phase, {'double'}, {'3d', '>=', 0, '<=', 1'});
         % Initialize an empty array to hold the bit-packed hologram
         numPatterns = size(phase, 3);
-        frame = zeros(3*2*plm.N, 2*plm.M, 'uint8');
+        frame = zeros(4*2*plm.N, 2*plm.M, 'uint8');
         
         % Prepare pointers to the phase data and the hologram array
         phasePtr = libpointer('doublePtr', phase);
