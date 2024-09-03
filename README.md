@@ -2,7 +2,7 @@
 
 ![Warning](https://img.shields.io/badge/under%20development%20-yellow)
 [![arXiv](https://img.shields.io/badge/arXiv-pending-<COLOR>.svg)](https://arxiv.org/abs/<INDEX>)
-![Warning](https://img.shields.io/badge/version-0.1a-red)
+![Warning](https://img.shields.io/badge/version-0.1.1a-red)
 <div style="display: flex; align-items: center;">
     <div>
         <p align="center">
