@@ -26,15 +26,14 @@
 
 If you have used ```plmctrl``` in a scientific publication, we would appreciate citation to the following reference:
 ```bibitex
-@article{joserocha,
- title         = {Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator},
- author        = {J. C. A. Rocha, ...},
- journal       = {...},
- volume        = {...},
- number        = {...},
- pages         = {...},
- year          = {...},
- doi           = {...},
+@misc{rocha2024fastlightefficientwavefrontshaping,
+      title={Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator}, 
+      author={José C. A. Rocha and Terry Wright and Unė G Būtaitė and Joel Carpenter and George S. D. Gordon and David B. Phillips},
+      year={2024},
+      eprint={2409.01289},
+      archivePrefix={arXiv},
+      primaryClass={physics.optics},
+      url={https://arxiv.org/abs/2409.01289}, 
 }
 ```
 
