@@ -1,6 +1,6 @@
 #pragma once
 
-// #define INCLUDE_LIGHTCRAFTER_WRAPPERS
+#define INCLUDE_LIGHTCRAFTER_WRAPPERS
 
 #ifdef INCLUDE_LIGHTCRAFTER_WRAPPERS
 #include <PLM/API.h>
@@ -42,6 +42,9 @@ namespace PLM {
 	}
 #endif
 
+using timepoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
+timepoint start;
+timepoint end;
 
 namespace PLM {
 
@@ -81,12 +84,24 @@ namespace PLM {
 		ID3D11Texture2D* pTexture = NULL;
 		data_texture_view->GetResource((ID3D11Resource**)&pTexture);
 		g_pd3dDeviceContext->Map(pTexture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource);
+		//start = std::chrono::high_resolution_clock::now();
 
-		memcpy(mapped_resource.pData, data, N * M * 4);
+		uint8_t* dest = static_cast<uint8_t*>(mapped_resource.pData);
+		uint8_t* src = static_cast<uint8_t*>(data);
+
+		for (UINT row = 0; row < M; ++row) {
+			// Copy each row, taking into account the pitch
+			memcpy(dest + row * mapped_resource.RowPitch,
+				src + row * N * 4 * sizeof(uint8_t),
+				N * 4 * sizeof(uint8_t));
+		}
 
 		g_pd3dDeviceContext->Unmap(pTexture, 0);
 		pTexture->Release();
 
+		//end = std::chrono::high_resolution_clock::now();
+		//std::chrono::duration<double> elapsed = end - start;
+		//std::cout << "Elapsed time: " << std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count() << " us" << std::endl;
 		static ImVec2 ulim = ImVec2(0.0f, 1.0f);
 		static ImVec2 vlim = ImVec2(0.0f, 1.0f);
 

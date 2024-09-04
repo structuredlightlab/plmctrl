@@ -45,12 +45,12 @@ function plm = PLMController(MAX_FRAMES, width, height)
         calllib('plmctrl', 'StartUI', plm.MAX_FRAMES);
     end
 
-    function res = InsertFrames(frames, offset)
+    function res = InsertFrames(frames, offset, format)
         validateattributes(frames, {'uint8'}, {'3d'});
         validateattributes(offset, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
         
         % Insert the holograms into the PLM at the specified offset
-        res = calllib('plmctrl', 'InsertPLMFrame', libpointer('uint8Ptr', frames), size(frames, 3), offset);
+        res = calllib('plmctrl', 'InsertPLMFrame', libpointer('uint8Ptr', frames), size(frames, 3), offset, format);
     end
 
     function SetFrameSequence(sequence)

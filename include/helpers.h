@@ -1,6 +1,8 @@
 #pragma once
 #include <windows.h>
 
+#define clamp(x, min, max) (x < min ? min : (x > max ? max : x))
+
 // Struct to hold the index and the monitor RECT together
 struct MonitorData {
 	int monitorIndex;

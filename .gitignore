@@ -42,3 +42,4 @@
 /include/PLM/common.h
 /include/PLM/usb*
 
+*.ini

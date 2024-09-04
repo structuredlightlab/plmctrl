@@ -72,7 +72,7 @@ bool isSetupDone = false;
 uint8_t* plm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex plm_image_mutex;
-int N = 128, M = 128, monitor_id = 0;
+int N = 1920/4, M = 1080/4, monitor_id = 0;
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
 
@@ -171,7 +171,7 @@ int UI()
 
 	// Create application window
 	// ImGui_ImplWin32_EnableDpiAwareness();
-	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
+	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"plmctrl", nullptr };
 	::RegisterClassExW(&wc);
 
 	HWND hwnd = ::CreateWindowEx(
@@ -243,6 +243,7 @@ int UI()
 	timepoint end_total;
 	timepoint start;
 	timepoint end;
+
 
 
 	// Frame texture (holds the bitpacked holograms)
@@ -415,6 +416,7 @@ int UI()
 		// first_frame_trigger is a variable to know exactly that the first frame was already sent to the GPU buffer queue. 
 		if (frames_to_play >= 0 && !(first_frame_trigger)) {
 			frame_index++;
+			frame_index = clamp(frame_index, 0, MAX_FRAMES - 1);
 			frames_to_play--;
 		};
 
@@ -457,6 +459,7 @@ void StartUI(unsigned int number_of_frames) {
 	frame_order.resize(MAX_FRAMES);
 
 #ifndef PLM_DEBUG
+	std::cout << "Starting UI thread" << std::endl;
 	ui_thread = std::thread(UI);
 #else
 	UI();
@@ -519,7 +522,10 @@ bool SetFrameSequence(unsigned long long* sequence, unsigned long long length) {
 	return true;
 };
 
-bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, unsigned long long offset = 0) {
+bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, unsigned long long offset = 0, int type = 0) {
+
+	// Type: 0 - RGB;
+	// Type: 1 - RGBA;
 
 	if (offset + num_frames > MAX_FRAMES) {
 		// Exceeds the maximum number of frames we can store
@@ -528,15 +534,28 @@ bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, uns
 
 	std::cout << "Inserting " << num_frames << " frames at offset " << offset << std::endl;
 
-	uint64_t frame_elements = 4 * (2 * N) * (2 * M);
+	uint64_t rgb_elements = (2 * N) * (2 * M);
+	uint64_t frame_elements = 4 * rgb_elements;
 	uint64_t total_elements = num_frames * frame_elements;
-
-	frame_set.insert(
-		frame_set.begin() + offset * frame_elements,
-		frame,
-		frame + total_elements
-	);
-
+	int k = 0;
+	if (type == 0) {
+		std::cout << "Type: RGB" << std::endl;
+		for (uint64_t n = 0; n < num_frames; n++) {
+			for (uint64_t i = 0; i < rgb_elements; i++) {
+				frame_set.at(4 * i + (n + offset) * frame_elements + 0) = frame[3 * i + n * (3 * rgb_elements) + 0];
+				frame_set.at(4 * i + (n + offset) * frame_elements + 1) = frame[3 * i + n * (3 * rgb_elements) + 1];
+				frame_set.at(4 * i + (n + offset) * frame_elements + 2) = frame[3 * i + n * (3 * rgb_elements) + 2];
+			};
+			std::cout << "Frame " << n << " inserted" << std::endl;
+		};
+	} else if (type == 1) {
+		std::cout << "Type: RGBA" << std::endl;
+		frame_set.insert(
+			frame_set.begin() + offset * frame_elements,
+			frame,
+			frame + total_elements
+		);
+	};
 	std::cout << num_frames << " frames inserted" << std::endl;
 
 	return true;
@@ -775,9 +794,13 @@ void DebugWindow(
 
 	//Status(first_frame_trigger);
 	ImGui::Text("Frames to play: %d/%d", frames_to_play, frames_in_sequence);
-	ImGui::Text("Buffer Index %d/%d", buffer_index, 24 * frames_in_sequence);
+	ImGui::Text("Buffer Index %d/%d", 24 * buffer_index, 24 * frames_in_sequence);
 	ImGui::Text("Frame pointer [%p]", plm_image_ptr);
-	ImGui::Text("Frame index: [%d]", frame_index % MAX_FRAMES);
+	ImGui::Text("Frame index: [%d], Frame [%d]", frame_index, frame_order[frame_index % MAX_FRAMES]);
+	ImGui::SameLine();
+	if (ImGui::ArrowButton("##left", ImGuiDir_Left)) { frame_index--; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
+	ImGui::SameLine();
+	if (ImGui::ArrowButton("##right", ImGuiDir_Right)) { frame_index++; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
 	// Display frame_order array
 	ImGui::Text("Frame order:");
 	ImGui::SameLine();

@@ -1,22 +1,21 @@
 clearvars;
 
 addpath('../');
-addpath('../libs/')
-
+% addpath('../libs/')
 
 %%
 MAX_FRAMES = 12;
 
 % Set monitor size
 % PLM is N = 1358 by M = 800
-N = 1920/8;
-M = 1080/8;
+N = 1920/2;
+M = 1080/2;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
 
 %% Start the UI
-monitorId = 1; % This parameter is not working r
+monitorId = 1; % This parameter is not currently working.
 plm.StartUI(monitorId);
 
 %% Modify the Look-Up Table (LUT)
@@ -27,15 +26,35 @@ plm.SetLookupTable(phase_levels);
 
 %% Simple test: Inserts a random hologram into the sequence
 % Create a random frame (bitpacked holograms)
-frame =  randi(255,3*2*N, 2*M, 'uint8');
+[X,Y] = meshgrid(linspace(0,255, 2*M), linspace(0,255,3*2*N));
+% frame =  randi(255,3*2*N, 2*M, 'uint8');
+frame = uint8(X);
+% frame(:,:,end+1) = uint8(X);
+% frame(:,:,end+1) = uint8(Y);
+% frame(:,:,end+1) = uint8(X);
+
+% frame1 = uint8(X);
+% frame1(:,:,end+1) = uint8(Y);
+% frame(4:4:end, :) = 255; % Set the alpha as max
 % Set the hologram to be displayed
+
+data = h5read('plm_sync_hologram.h5','/holograms/data');
+
+% frame = 255*ones(4*2*N, 2*M,'uint8');
+% 
+% for i = 1:2*N-1
+%     frame((4*i):(4*i+2),:) = data((3*i):(3*i+2), :, 1);
+% end
 offset = 0;
-plm.InsertFrames(frame, offset)
+format = 0;
+% plm.InsertFrames(frame, offset, format)
+plm.InsertFrames(data(:,:,1:MAX_FRAMES), offset, format)
+plm.SetFrame(1);
 
 %% Inserts a set of frames into the sequence
 % Create a random frame (bitpacked holograms)
 num_frames = 10;
-frames =  randi(255,3*2*N, 2*M, num_frames, 'uint8');
+frames =  randi(255,4*2*N, 2*M, num_frames, 'uint8');
 % Set the hologram to be displayed
 offset = 0;
 plm.InsertFrames(frames, offset)
@@ -46,7 +65,7 @@ plm.InsertFrames(frames, offset)
 % sequence = repmat([0,1,2,3,],[1,6]);
 % % sequence = repmat([0,1],[1,12]);
 % sequence = repmat([0,1,2,3],[1,6]);
-sequence = [0,1,2,3];
+sequence = 0:(MAX_FRAMES-1);
 plm.SetFrameSequence(sequence);
 
 %% Start Sequence
@@ -88,7 +107,7 @@ wedge = @(alpha, beta) alpha*x + beta*y;
 % Generate multiple holograms
 numHolograms = 24;
 phase = zeros(N, M, numHolograms);
-frame_set = zeros(3*2*N, 2*M, MAX_FRAMES, 'uint8');
+frame_set = zeros(4*2*N, 2*M, MAX_FRAMES, 'uint8');
 
 for j = 1:MAX_FRAMES
     fprintf("MATLAB: Generating bitpacked hologram #%d\n",j);
@@ -103,7 +122,8 @@ end
 
 % Uploads a bunch of frames to the PLM memory starting at index 0 (=offset)
 offset = 0;
-plm.InsertFrames(frame_set, offset);
+format = 1; % RGBA
+plm.InsertFrames(frame_set, offset, 1);
 
 sequence = (0:MAX_FRAMES-1);
 plm.SetFrameSequence(sequence);
@@ -133,9 +153,15 @@ offset = 0;
 plm.InsertFrames(frame, offset);
 plm.SetFrame(0);
 
+% %% Command the PLM to start the sequencer 
+% (Not yet implemented in the wrapper)
+% plm.Play();
+% %% Command the PLM to stop the sequencer
+% (Not yet implemented in the wrapper)
+% plm.Pause();
 
 %% Visualize the hologram. 
-% MATLAB figure and the second screen should match or I've done something wrong
+% This MATLAB figure and the second screen should match or I've done something wrong
 % Assemble the RGB matrix from the hologram matrix
 A = frame';
 RGB = zeros(2*M, 2*N, 3);
@@ -149,6 +175,5 @@ imshow(RGB/255);
 set(gca, 'Position', [0.1, 0.1, 0.8, 0.8])
 
 
-%% Unload the library from MATLAB's memory
-
+%% Close the UI and Unload the library from MATLAB's memory 
 plm.Cleanup();

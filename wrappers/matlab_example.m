@@ -8,8 +8,8 @@ MAX_FRAMES = 12;
 
 % Set monitor size
 % PLM is N = 1358 by M = 800
-N = 1920/4;
-M = 1080/4;
+N = 1920/2;
+M = 1080/2;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
@@ -26,11 +26,12 @@ plm.SetLookupTable(phase_levels);
 
 %% Simple test: Inserts a random hologram into the sequence
 % Create a random frame (bitpacked holograms)
-frame =  randi(255,4*2*N, 2*M, 'uint8');
-frame(4:4:end, :) = 255; % Set the alpha as max
-% Set the hologram to be displayed
+frame =  randi(255,3*2*N, 2*M, 'uint8');
+
 offset = 0;
-plm.InsertFrames(frame, offset)
+format = 0; % 0 = RGB, 1 = RGBA
+plm.InsertFrames(frame, offset, format)
+plm.SetFrame(0);
 
 %% Inserts a set of frames into the sequence
 % Create a random frame (bitpacked holograms)
@@ -38,7 +39,8 @@ num_frames = 10;
 frames =  randi(255,4*2*N, 2*M, num_frames, 'uint8');
 % Set the hologram to be displayed
 offset = 0;
-plm.InsertFrames(frames, offset)
+format = 1; % 0 = RGB, 1 = RGBA
+plm.InsertFrames(frames, offset, format)
 
 %% Sets the frame sequence to be displayed
 % Each frame contains 24 bitpacked PLM holograms
@@ -46,7 +48,7 @@ plm.InsertFrames(frames, offset)
 % sequence = repmat([0,1,2,3,],[1,6]);
 % % sequence = repmat([0,1],[1,12]);
 % sequence = repmat([0,1,2,3],[1,6]);
-sequence = [0,1,2,3];
+sequence = 0:(MAX_FRAMES-1);
 plm.SetFrameSequence(sequence);
 
 %% Start Sequence
@@ -103,7 +105,8 @@ end
 
 % Uploads a bunch of frames to the PLM memory starting at index 0 (=offset)
 offset = 0;
-plm.InsertFrames(frame_set, offset);
+format = 1; % RGBA
+plm.InsertFrames(frame_set, offset, format);
 
 sequence = (0:MAX_FRAMES-1);
 plm.SetFrameSequence(sequence);
@@ -130,7 +133,8 @@ end
 frame = plm.BitpackHolograms(phase);
 
 offset = 0;
-plm.InsertFrames(frame, offset);
+format = 1; % RGBA
+plm.InsertFrames(frame, offset, format);
 plm.SetFrame(0);
 
 % %% Command the PLM to start the sequencer 
