@@ -1,7 +1,7 @@
 clearvars;
 
 addpath('../');
-addpath('../libs/')
+addpath('../bin/')
 
 %%
 MAX_FRAMES = 12;

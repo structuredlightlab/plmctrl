@@ -43,3 +43,8 @@
 /include/PLM/usb*
 
 *.ini
+
+/bin/*.exp
+/bin/*.lib
+/bin/*.pdb
+

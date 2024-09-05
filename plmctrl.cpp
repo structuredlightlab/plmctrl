@@ -1,8 +1,8 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
- * Maintainer: José C. A. Rocha (email: jd964@exeter.ac.uk)
- * Version: 0.1.1 alpha
- * Date: 03/Sep/2024
+ * Structured Light Lab
+ * Version: 0.1.2 alpha
+ * Date: 05/Sep/2024
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
