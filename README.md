@@ -25,7 +25,7 @@
 ```plmctrl``` is an open source library for controlling the 0.67" (DLP6750 EVM) Texas-Instruments Phase-only Light Modulator (PLM). This library is a C++/DirectX code that handles the whole process from a matrix of ***continous phase values*** → ***prepare the hologram*** → ***display the hologram on the screen***. When displaying different holograms in a sequence, frame-pacing is also ensured.
 
 If you have used ```plmctrl``` in a scientific publication, we would appreciate citation to the following reference:
-```bibitex
+```bibtex
 @misc{rocha2024fastlightefficientwavefrontshaping,
       title={Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator}, 
       author={José C. A. Rocha and Terry Wright and Unė G Būtaitė and Joel Carpenter and George S. D. Gordon and David B. Phillips},
