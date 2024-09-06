@@ -111,7 +111,7 @@ plm.InsertFrames(frame_set, offset, format);
 sequence = (0:MAX_FRAMES-1);
 plm.SetFrameSequence(sequence);
 
-plm.SetFrame(0); % First frame
+% plm.SetFrame(0); % First frame
 
 %%
 sequence = (0:MAX_FRAMES-1);

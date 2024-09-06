@@ -1,8 +1,8 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Structured Light Lab
- * Version: 0.1.2 alpha
- * Date: 05/Sep/2024
+ * Version: 0.1.3 alpha
+ * Date: 07/Sep/2024
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
@@ -72,7 +72,7 @@ bool isSetupDone = false;
 uint8_t* plm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex plm_image_mutex;
-int N = 1920/4, M = 1080/4, monitor_id = 0;
+int N = 1920 / 4, M = 1080 / 4, monitor_id = 0;
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
 
@@ -164,7 +164,7 @@ int UI()
 {
 
 	RECT monitorRect;
-	if (!GetSecondMonitorRect(monitorRect)){
+	if (!GetSecondMonitorRect(monitorRect)) {
 		std::cerr << "Second monitor not found!" << std::endl;
 		return 1;
 	}
@@ -220,7 +220,7 @@ int UI()
 
 	// When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
 	ImGuiStyle& style = ImGui::GetStyle();
-	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable){
+	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
 		style.WindowRounding = 0.0f;
 		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
 	}
@@ -229,8 +229,6 @@ int UI()
 	ImGui_ImplWin32_Init(hwnd);
 	ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-	// Our state
-	bool show_demo_window = false;
 	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 	ImGuiMouseButton LMB = ImGuiMouseButton_Left;
 
@@ -378,7 +376,7 @@ int UI()
 		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
 		// Update and Render additional Platform Windows
-		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable){
+		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
 			ImGui::UpdatePlatformWindows();
 			ImGui::RenderPlatformWindowsDefault();
 		}
@@ -386,7 +384,7 @@ int UI()
 		int display_w, display_h;
 
 		// Present with VSync. This is the most important part for correct frame-pace
-		HRESULT hr = g_pSwapChain->Present(1, 0);   
+		HRESULT hr = g_pSwapChain->Present(1, 0);
 		g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
 
 		end = std::chrono::high_resolution_clock::now();
@@ -548,7 +546,8 @@ bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, uns
 			};
 			std::cout << "Frame " << n << " inserted" << std::endl;
 		};
-	} else if (type == 1) {
+	}
+	else if (type == 1) {
 		std::cout << "Type: RGBA" << std::endl;
 		frame_set.insert(
 			frame_set.begin() + offset * frame_elements,
@@ -679,7 +678,7 @@ bool CreateDeviceD3D(HWND hWnd)
 	D3D_FEATURE_LEVEL featureLevel;
 	const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
 	HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
-	
+
 	printf("D3D11CreateDeviceAndSwapChain: x%8x\n", res);
 	if (res == DXGI_ERROR_UNSUPPORTED) // Try high-performance WARP software driver if hardware is not available.
 		res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
@@ -763,10 +762,9 @@ void DebugWindow(
 
 
 #ifndef INCLUDE_LIGHTCRAFTER_WRAPPERS
-	ImGui::SeparatorText("Warning");
+	ImGui::SeparatorText("!! Warning !!");
 	ImGui::Text("- This version does not support commanding the PLM to Play/Stop the sequence display");
 	ImGui::Text("- To enable this feature, follow the Wiki entry on this topic");
-	ImGui::Separator();
 #else
 	ImGui::SeparatorText("PLM Status");
 	if (PLM::IsConnected() == false) {
@@ -788,20 +786,14 @@ void DebugWindow(
 		plm_is_displaying = false;
 	};
 	ImGui::EndDisabled();
-	ImGui::Separator();
 #endif
 
 
 	//Status(first_frame_trigger);
+	ImGui::SeparatorText("Sequence");
 	ImGui::Text("Frames to play: %d/%d", frames_to_play, frames_in_sequence);
 	ImGui::Text("Buffer Index %d/%d", 24 * buffer_index, 24 * frames_in_sequence);
-	ImGui::Text("Frame pointer [%p]", plm_image_ptr);
-	ImGui::Text("Frame index: [%d], Frame [%d]", frame_index, frame_order[frame_index % MAX_FRAMES]);
-	ImGui::SameLine();
-	if (ImGui::ArrowButton("##left", ImGuiDir_Left)) { frame_index--; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
-	ImGui::SameLine();
-	if (ImGui::ArrowButton("##right", ImGuiDir_Right)) { frame_index++; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
-	// Display frame_order array
+
 	ImGui::Text("Frame order:");
 	ImGui::SameLine();
 	ImGui::Text("[");
@@ -811,12 +803,25 @@ void DebugWindow(
 		ImGui::SameLine();
 	};
 	ImGui::Text("... %llu], total: %d", frame_order[MAX_FRAMES - 1], MAX_FRAMES);
-	ImGui::PlotLines("LUT", phases, 17);
-	ImGui::Separator();
-	ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
-	ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
-	ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
 
+	ImGui::SeparatorText("Frame Data");
+	if (ImGui::TreeNode("Frame on display")) {
+		static ImVec2 ulim = ImVec2(0.0f, 1.0f);
+		static ImVec2 vlim = ImVec2(0.0f, 1.0f);
+		ImGui::Image((void*)data_texture_srv, ImVec2((float)N / 4, (float)M / 4), ImVec2(ulim.x, vlim.x), ImVec2(ulim.y, vlim.y));
+		ImVec2 pos = ImGui::GetCursorScreenPos();
+		ImGui::TreePop();
+	};
+	ImGui::Text("Frame pointer [%p]", plm_image_ptr);
+	ImGui::Text("Frame index: [%d], Frame [%d]", frame_index, frame_order[frame_index % MAX_FRAMES]);
+	//ImGui::SliderInt("Frame index", &frame_index, 0, MAX_FRAMES - 1);
+	ImGui::SameLine();
+	if (ImGui::ArrowButton("##left", ImGuiDir_Left)) { frame_index--; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
+	ImGui::SameLine();
+	if (ImGui::ArrowButton("##right", ImGuiDir_Right)) { frame_index++; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
+
+	ImGui::SeparatorText("LUT");
+	ImGui::PlotLines("LUT", phases, 17);
 	// Display phase_map
 	if (ImGui::TreeNode("Phase map [0...15]: ")) {
 
@@ -826,13 +831,20 @@ void DebugWindow(
 			};
 		};
 		ImGui::TreePop();
-	}
+	};
+
+	ImGui::SeparatorText("Stats");
+	ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
+	ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
+	ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
+
 	ImGui::End();
+
 };
 
 #ifdef PLM_DEBUG
-int main(){
-	
+int main() {
+
 	StartUI(48);
 	return 0;
 }
