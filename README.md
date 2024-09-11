@@ -75,11 +75,12 @@ frame = plm.BipackHolograms(phase);
 
 % ---- Uploads a bitpacked hologram to the PLM ----
 offset = 0;
-plm.InsertFrames(frame, offset);
+format = 1; % RGBA = 1, RGB = 0
+plm.InsertFrames(frame, offset, format);
 
 % If you need to set a sequence or start it, you can do so:
 plm.SetHologramSequence(0:MAX_FRAMES-1);  % Set to display the bitpacked holograms in a sequence
-plm.StartSequence(MAX_FRAMES);  % Display MAX_HOLOGRAMS hologram in a sequence following the sequence
+plm.StartSequence(MAX_FRAMES);  % Display MAX_HOLOGRAMS hologram in a sequence following the sequence order
 
 % When you're done:
 plm.Cleanup();
