@@ -71,7 +71,7 @@ for i = 1:numHolograms
 end
 
 % ---- Bitpacks 24 holograms into a single RGB frame ---- 
-frame = plm.BipackHolograms(phase);
+frame = plm.BitpackHolograms(phase);
 
 % ---- Uploads a bitpacked hologram to the PLM ----
 offset = 0;
