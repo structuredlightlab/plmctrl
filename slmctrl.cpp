@@ -327,7 +327,7 @@ int UI()
 			+ hologram_order[hologram_index % MAX_HOLOGRAMS] * hologram_elements;
 
 		// SLM hologram window
-		//SLM::ImagescSLM("SLM", slm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
+		SLM::ImagescSLM("SLM", slm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, io, N, M, &mutex, window_x0, window_y0);
 
 		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
 
@@ -415,7 +415,7 @@ void StartUI(unsigned int number_of_holograms) {
 	running = true;
 	slm_image_ptr = nullptr;
 
-	hologram_set.resize(4 * (2 * N) * (2 * M) * MAX_HOLOGRAMS);
+	hologram_set.resize( N * M * MAX_HOLOGRAMS);
 	std::fill(hologram_set.begin(), hologram_set.end(), 255);
 
 	hologram_order.resize(MAX_HOLOGRAMS);
@@ -524,7 +524,7 @@ bool GrabSLMHologram(unsigned char* hologram, uint64_t index = 0) {
 		return false;
 	};
 
-	uint64_t hologram_elements = 4 * (2 * N) * (2 * M);
+	uint64_t hologram_elements = N * M;
 	uint64_t ptr_offset = index * hologram_elements;
 
 	for (uint64_t i = 0; i < hologram_elements; i++) {
