@@ -64,7 +64,6 @@ slm.Cleanup();
 
 ## External Code/Libraries/used by PLMCtrl
 * [Dear ImGui](https://github.com/ocornut/imgui) for GUI handling and wrapping graphics API
-* [hidapi](https://github.com/libusb/hidapi) for USB communication with the PLM
 * Microsoft's DirectX 11 as Graphics API
 
 ## Contact
