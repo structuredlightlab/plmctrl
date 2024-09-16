@@ -2,53 +2,53 @@
 
 // #define INCLUDE_LIGHTCRAFTER_WRAPPERS
 
-#ifdef INCLUDE_LIGHTCRAFTER_WRAPPERS
-#include <PLM/API.h>
-#include "PLM/usb.h"
-
-// Functions for direct USB communication with the PLM
-namespace PLM {
-
-	char versionStr[255];
-	unsigned int API_ver, App_ver, SWConfig_ver, SeqConfig_ver;
-
-	bool IsConnected() {
-		return USB_IsConnected();
-	};
-	int Open() {
-		return USB_Open();
-	};
-	int Close() {
-		return USB_Close();
-	};
-	int GetVersion() {
-		return LCR_GetVersion(&API_ver, &App_ver, &SWConfig_ver, &SeqConfig_ver);
-	};
-	int Play() {
-		return LCR_PatternDisplay(0x2);
-	};
-	int Stop() {
-		return LCR_PatternDisplay(0x1);
-	};
-}
-#else
-	namespace PLM {
-		int Play() {
-			return 0;
-		};
-		int Stop() {
-			return 0;
-		};
-	}
-#endif
+//#ifdef INCLUDE_LIGHTCRAFTER_WRAPPERS
+//#include <SLM/API.h>
+//#include "SLM/usb.h"
+//
+//// Functions for direct USB communication with the SLM
+//namespace SLM {
+//
+//	char versionStr[255];
+//	unsigned int API_ver, App_ver, SWConfig_ver, SeqConfig_ver;
+//
+//	bool IsConnected() {
+//		return USB_IsConnected();
+//	};
+//	int Open() {
+//		return USB_Open();
+//	};
+//	int Close() {
+//		return USB_Close();
+//	};
+//	int GetVersion() {
+//		return LCR_GetVersion(&API_ver, &App_ver, &SWConfig_ver, &SeqConfig_ver);
+//	};
+//	int Play() {
+//		return LCR_PatternDisplay(0x2);
+//	};
+//	int Stop() {
+//		return LCR_PatternDisplay(0x1);
+//	};
+//}
+//#else
+//	namespace SLM {
+//		int Play() {
+//			return 0;
+//		};
+//		int Stop() {
+//			return 0;
+//		};
+//	}
+//#endif
 
 using timepoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
 timepoint start;
 timepoint end;
 
-namespace PLM {
+namespace SLM {
 
-	void ImagescPLM(const char* title,
+	void ImagescSLM(const char* title,
 		uint8_t* data,
 		ID3D11ShaderResourceView* data_texture_view,
 		ID3D11Device* g_pd3dDevice,

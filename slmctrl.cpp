@@ -1,34 +1,18 @@
 /*
- * PLMCtrl - Phase-only Light Modulator Control Library
+ * SLMCtrl - Spatial Light Modulator Control Library
  * Structured Light Lab
- * Version: 0.1.3 alpha
- * Date: 07/Sep/2024
- * Repository : https://github.com/structuredlightlab/plmctrl
- *
- * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
- * Phase-only Light Modulator (DLP6750 EVM). The library facilitates the creation, bitpacking, and
- * display of holograms on the PLM, ensuring precise frame pacing during hologram sequence display.
-
- * If you use plmctrl in your research, please cite:
- * @article{joserocha,
- *     title         = {Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator},
- *     author        = {J. C. A. Rocha, ...},
- *     journal       = {...},
- *     volume        = {...},
- *     number        = {...},
- *     pages         = {...},
- *     year          = {...},
- *     doi           = {...},
- * }
+ * Version: 0.1 alpha
+ * Date: 16/Sep/2024
+ * Repository : https://github.com/Windier/slmctrl
  *
  * External Dependencies:
  * - Dear ImGui: GUI handling and graphics API wrapping
- * - hidapi: USB communication with the PLM
+ * - hidapi: USB communication with the SLM
  */
 
 
  // To be defined if compiled as an executable
-// #define PLM_DEBUG
+// #define SLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -48,8 +32,8 @@
 #include <iostream>
 
 
-#include "PLM/PLM.h"
-#include "plmctrl.h"
+#include "SLM/SLM.h"
+#include "slmctrl.h"
 
 #include "helpers.h"
 
@@ -69,29 +53,29 @@ D3D11_TEXTURE2D_DESC desc = {};
 
 bool running = false;
 bool isSetupDone = false;
-uint8_t* plm_image_ptr = nullptr;
+uint8_t* slm_image_ptr = nullptr;
 std::mutex mutex;
-std::mutex plm_image_mutex;
+std::mutex slm_image_mutex;
 int N = 1920 / 4, M = 1080 / 4, monitor_id = 0;
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
 
-enum PLM_MODE {
-	PLM_IDLE = 0,
-	PLM_PLAYING = 1,
-	PLM_CONTINUOUS = 2
+enum SLM_MODE {
+	SLM_IDLE = 0,
+	SLM_PLAYING = 1,
+	SLM_CONTINUOUS = 2
 };
 
-PLM_MODE plm_mode = PLM_IDLE;
-bool plm_connected = false;
-int frames_to_play = 0;
-int frames_in_sequence = -1;
-bool first_frame_trigger = false;
+SLM_MODE slm_mode = SLM_IDLE;
+bool slm_connected = false;
+int holograms_to_play = 0;
+int holograms_in_sequence = -1;
+bool first_hologram_trigger = false;
 bool start_playing_trigger = false;
-bool plm_is_displaying = false;
+bool slm_is_displaying = false;
 bool sequence_active = false;
 bool continuous_mode = false;
-int64_t frame_index = 0;
+int64_t hologram_index = 0;
 int64_t buffer_index = -1;
 long long t0 = 0;
 
@@ -102,31 +86,13 @@ std::chrono::duration<double> elapsed_content;
 std::chrono::duration<double> elapsed_buffer;
 std::chrono::duration<double> elapsed_total;
 
-unsigned int MAX_FRAMES = 48;
-std::vector<uint8_t> frame_set;
-std::vector<uint64_t> frame_order;
+unsigned int MAX_HOLOGRAMS = 48;
+std::vector<uint8_t> hologram_set;
+std::vector<uint64_t> hologram_order;
 
 // TI's default lookup-table
-float phases[17] = { 0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1.0 };
-// Binary counting phase-map, has to be calibrated.
-int phase_map[] = {
-	0, 0, 0, 0,
-	1, 0, 0, 0,
-	0, 1, 0, 0,
-	1, 1, 0, 0,
-	0, 0, 1, 0,
-	1, 0, 1, 0,
-	0, 1, 1, 0,
-	1, 1, 1, 0,
-	0, 0, 0, 1,
-	1, 0, 0, 1,
-	0, 1, 0, 1,
-	1, 1, 0, 1,
-	0, 0, 1, 1,
-	1, 0, 1, 1,
-	0, 1, 1, 1,
-	1, 1, 1, 1
-};
+float phases[256] = {};
+
 
 std::thread ui_thread;
 
@@ -145,16 +111,16 @@ bool Cleanup() {
 	return true;
 }
 
-bool StartSequence(int number_of_frames) {
+bool StartSequence(int number_of_holograms) {
 
-	if (number_of_frames > MAX_FRAMES) {
+	if (number_of_holograms > MAX_HOLOGRAMS) {
 		return false;
 	};
 
-	frames_to_play = number_of_frames;
-	frames_in_sequence = number_of_frames;
+	holograms_to_play = number_of_holograms;
+	holograms_in_sequence = number_of_holograms;
 	sequence_active = true;
-	first_frame_trigger = true;
+	first_hologram_trigger = true;
 
 	return true;
 }
@@ -171,13 +137,13 @@ int UI()
 
 	// Create application window
 	// ImGui_ImplWin32_EnableDpiAwareness();
-	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"plmctrl", nullptr };
+	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"slmctrl", nullptr };
 	::RegisterClassExW(&wc);
 
 	HWND hwnd = ::CreateWindowEx(
 		WS_EX_TOPMOST, // dwExStyle: No extended styles
 		wc.lpszClassName,
-		L"plmctrl",
+		L"slmctrl",
 		WS_POPUP | WS_VISIBLE,
 		monitorRect.left, monitorRect.top,
 		monitorRect.right - monitorRect.left, monitorRect.bottom - monitorRect.top,
@@ -229,6 +195,8 @@ int UI()
 	ImGui_ImplWin32_Init(hwnd);
 	ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
+	// Our state
+	bool show_demo_window = false;
 	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 	ImGuiMouseButton LMB = ImGuiMouseButton_Left;
 
@@ -244,7 +212,7 @@ int UI()
 
 
 
-	// Frame texture (holds the bitpacked holograms)
+	// Hologram texture (holds the bitpacked holograms)
 	desc.Width = 2 * N;
 	desc.Height = 2 * M;
 	desc.MipLevels = 1;
@@ -261,20 +229,19 @@ int UI()
 
 	timepoint now;
 	bool done = false;
-	// Main UI loop. Changes the frames with VSync enabled
+	// Main UI loop. Changes the holograms with VSync enabled
 	while (running && !done)
 	{
 
-		if (frames_to_play < 0 && sequence_active) {
+		if (holograms_to_play < 0 && sequence_active) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(delay));
 			// Pause Playing the sequence.
 
-			if (plm_connected)  PLM::Stop(); // This only works with INCLUDE_LIGHTCRAFTER_WRAPPERS is defined
-			plm_is_displaying = false;
+			slm_is_displaying = false;
 			sequence_active = false;
 
 			buffer_index = -1; // buffer_index = -1 signals that the sequence has ended
-			plm_mode = PLM_IDLE;
+			slm_mode = SLM_IDLE;
 
 			camera_trigger = false;
 
@@ -320,7 +287,7 @@ int UI()
 			CreateRenderTarget();
 		}
 
-		// Start the Dear ImGui frame
+		// Start the Dear ImGui hologram
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
@@ -349,19 +316,19 @@ int UI()
 		ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 		ImGui::End();
 
-		static uint64_t frame_elements = 4 * (2 * N) * (2 * M);
-		if (frames_to_play == frames_in_sequence && sequence_active) {
-			plm_mode = PLM_PLAYING;
-			frame_index = 0;
-			first_frame_trigger = false;
+		static uint64_t hologram_elements = 4 * (2 * N) * (2 * M);
+		if (holograms_to_play == holograms_in_sequence && sequence_active) {
+			slm_mode = SLM_PLAYING;
+			hologram_index = 0;
+			first_hologram_trigger = false;
 			start_playing_trigger = true;
 		}
 
-		plm_image_ptr = frame_set.data()
-			+ frame_order[frame_index % MAX_FRAMES] * frame_elements;
+		slm_image_ptr = hologram_set.data()
+			+ hologram_order[hologram_index % MAX_HOLOGRAMS] * hologram_elements;
 
-		// PLM frame window
-		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
+		// SLM hologram window
+		//SLM::ImagescSLM("SLM", slm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
 
 		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
 
@@ -383,7 +350,7 @@ int UI()
 
 		int display_w, display_h;
 
-		// Present with VSync. This is the most important part for correct frame-pace
+		// Present with VSync. This is the most important part for correct hologram-pace
 		HRESULT hr = g_pSwapChain->Present(1, 0);
 		g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
 
@@ -393,16 +360,14 @@ int UI()
 		buffer_index = camera_trigger ? buffer_index + 1 : -1;
 
 
-		if (plm_mode == PLM_PLAYING && frames_to_play == frames_in_sequence) {
+		if (slm_mode == SLM_PLAYING && holograms_to_play == holograms_in_sequence) {
 			camera_trigger = true;
 			buffer_index = 0;
 			t0 = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
 			std::cout << "FIRST FRAME TRIGGER" << std::endl;
-			PLM::Play(); // This only works if LightCrafter wrappers are included
-
 		};
-		if (plm_mode == PLM_PLAYING) {
-			std::cout << "Buffer Index on plmctrl: " << buffer_index << std::endl;
+		if (slm_mode == SLM_PLAYING) {
+			std::cout << "Buffer Index on slmctrl: " << buffer_index << std::endl;
 		}
 
 		end = std::chrono::high_resolution_clock::now();
@@ -411,11 +376,11 @@ int UI()
 		end_total = std::chrono::high_resolution_clock::now();
 		elapsed_total = end_total - start_total;
 
-		// first_frame_trigger is a variable to know exactly that the first frame was already sent to the GPU buffer queue. 
-		if (frames_to_play >= 0 && !(first_frame_trigger)) {
-			frame_index++;
-			frame_index = clamp(frame_index, 0, MAX_FRAMES - 1);
-			frames_to_play--;
+		// first_hologram_trigger is a variable to know exactly that the first hologram was already sent to the GPU buffer queue. 
+		if (holograms_to_play >= 0 && !(first_hologram_trigger)) {
+			hologram_index++;
+			hologram_index = clamp(hologram_index, 0, MAX_HOLOGRAMS - 1);
+			holograms_to_play--;
 		};
 
 	};
@@ -438,25 +403,25 @@ int UI()
 	return 0;
 }
 
-void StartUI(unsigned int number_of_frames) {
+void StartUI(unsigned int number_of_holograms) {
 
-	MAX_FRAMES = number_of_frames;
+	MAX_HOLOGRAMS = number_of_holograms;
 
 	if (running) {
 		StopUI();
-		StartUI(number_of_frames);
+		StartUI(number_of_holograms);
 		return;
 	};
 
 	running = true;
-	plm_image_ptr = nullptr;
+	slm_image_ptr = nullptr;
 
-	frame_set.resize(4 * (2 * N) * (2 * M) * MAX_FRAMES);
-	std::fill(frame_set.begin(), frame_set.end(), 255);
+	hologram_set.resize(4 * (2 * N) * (2 * M) * MAX_HOLOGRAMS);
+	std::fill(hologram_set.begin(), hologram_set.end(), 255);
 
-	frame_order.resize(MAX_FRAMES);
+	hologram_order.resize(MAX_HOLOGRAMS);
 
-#ifndef PLM_DEBUG
+#ifndef SLM_DEBUG
 	std::cout << "Starting UI thread" << std::endl;
 	ui_thread = std::thread(UI);
 #else
@@ -469,25 +434,25 @@ void StartUI(unsigned int number_of_frames) {
 void ResetUI() {
 	running = false;
 	StopUI();
-	StartUI(MAX_FRAMES);
+	StartUI(MAX_HOLOGRAMS);
 }
 
 void StopUI() {
 
 	isSetupDone = false;
 	running = false;
-	plm_image_ptr = nullptr;
+	slm_image_ptr = nullptr;
 	ui_thread.join();
 
-	if (plm_connected) {
-		//USB_Close(); // THIS ONLY WORKS IN THE plmctrl's dev branch
-		plm_connected = false;
+	if (slm_connected) {
+		//USB_Close(); // THIS ONLY WORKS IN THE slmctrl's dev branch
+		slm_connected = false;
 	};
 
 	return;
 }
 
-void SetPLMWindowPos(int width, int height, int monitor) {
+void SetSLMWindowPos(int width, int height, int monitor) {
 	N = width;
 	M = height;
 	monitor_id = monitor;
@@ -499,95 +464,72 @@ void SetLookupTable(double* phase) {
 	}
 }
 
-bool SetPhaseMap(int* new_phase_map) {
-	const int phase_map_size = 16 * 4;
-	for (int i = 0; i < phase_map_size; i++) {
-		phase_map[i] = new_phase_map[i];
-	};
-	return true;
-}
+bool SetHologramSequence(unsigned long long* sequence, unsigned long long length) {
 
-bool SetFrameSequence(unsigned long long* sequence, unsigned long long length) {
-
-	if (length > MAX_FRAMES) {
+	if (length > MAX_HOLOGRAMS) {
 		return false;
 	};
 
 	for (int i = 0; i < length; i++) {
-		frame_order[i] = sequence[i];
+		hologram_order[i] = sequence[i];
 	};
 
 	return true;
 };
 
-bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, unsigned long long offset = 0, int type = 0) {
+bool InsertSLMHologram(unsigned char* hologram, unsigned long long num_holograms = 1, unsigned long long offset = 0) {
 
-	// Type: 0 - RGB;
-	// Type: 1 - RGBA;
 
-	if (offset + num_frames > MAX_FRAMES) {
-		// Exceeds the maximum number of frames we can store
+	if (offset + num_holograms > MAX_HOLOGRAMS) {
+		// Exceeds the maximum number of holograms we can store
 		return false;
 	};
 
-	std::cout << "Inserting " << num_frames << " frames at offset " << offset << std::endl;
+	std::cout << "Inserting " << num_holograms << " holograms at offset " << offset << std::endl;
 
-	uint64_t rgb_elements = (2 * N) * (2 * M);
-	uint64_t frame_elements = 4 * rgb_elements;
-	uint64_t total_elements = num_frames * frame_elements;
+	uint64_t hologram_elements = N * M;
+	uint64_t total_elements = num_holograms * hologram_elements;
 	int k = 0;
-	if (type == 0) {
-		std::cout << "Type: RGB" << std::endl;
-		for (uint64_t n = 0; n < num_frames; n++) {
-			for (uint64_t i = 0; i < rgb_elements; i++) {
-				frame_set.at(4 * i + (n + offset) * frame_elements + 0) = frame[3 * i + n * (3 * rgb_elements) + 0];
-				frame_set.at(4 * i + (n + offset) * frame_elements + 1) = frame[3 * i + n * (3 * rgb_elements) + 1];
-				frame_set.at(4 * i + (n + offset) * frame_elements + 2) = frame[3 * i + n * (3 * rgb_elements) + 2];
-			};
-			std::cout << "Frame " << n << " inserted" << std::endl;
-		};
-	}
-	else if (type == 1) {
-		std::cout << "Type: RGBA" << std::endl;
-		frame_set.insert(
-			frame_set.begin() + offset * frame_elements,
-			frame,
-			frame + total_elements
-		);
-	};
-	std::cout << num_frames << " frames inserted" << std::endl;
+
+	hologram_set.insert(
+		hologram_set.begin() + offset * hologram_elements,
+		hologram,
+		hologram + total_elements
+	);
+
+	std::cout << num_holograms << " holograms inserted" << std::endl;
 
 	return true;
 };
 
-bool SetPLMFrame(unsigned long long offset = 0) {
+bool SetSLMHologram(unsigned long long offset = 0) {
 
-	if (offset >= MAX_FRAMES) {
+	if (offset >= MAX_HOLOGRAMS) {
 		// Exceeds the maximum number of holograms we can store
 		return false;
 	};
 
-	frame_index = offset;
+	hologram_index = offset;
 
-	for (int i = 0; i < MAX_FRAMES; i++) {
-		frame_order[i] = offset;
+	for (int i = 0; i < MAX_HOLOGRAMS; i++) {
+		hologram_order[i] = offset;
 	};
 
 	return true;
 };
 
-bool GrabPLMFrame(unsigned char* hologram, uint64_t index = 0) {
+bool GrabSLMHologram(unsigned char* hologram, uint64_t index = 0) {
 
-	if (index >= MAX_FRAMES) {
+	if (index >= MAX_HOLOGRAMS) {
 		// Exceeds the maximum number of holograms we can store
 		return false;
 	};
 
-	uint64_t frame_elements = 4 * (2 * N) * (2 * M);
-	uint64_t ptr_offset = index * frame_elements;
+	uint64_t hologram_elements = 4 * (2 * N) * (2 * M);
+	uint64_t ptr_offset = index * hologram_elements;
 
-	for (uint64_t i = 0; i < frame_elements; i++) {
-		hologram[i] = frame_set.at(i + ptr_offset);
+	for (uint64_t i = 0; i < hologram_elements; i++) {
+		hologram[i] = hologram_set.at(i + ptr_offset);
 	};
 
 	return true;
@@ -605,18 +547,13 @@ unsigned int QuantisePhase(double phaseVal) {
 	return 0; // Default return if no condition is met
 }
 
-bool BitpackHolograms(
+bool CreateHolograms(
 	double* phase,
 	unsigned char* hologram,
 	unsigned long long N,
 	unsigned long long M,
 	int num_holograms
 ) {
-	// Check if the number of holograms is within the limit
-	if (num_holograms > 24) {
-		return false;
-	};
-
 	uint64_t phase_elements = N * M;
 
 	uint64_t holo = 0;
@@ -633,17 +570,7 @@ bool BitpackHolograms(
 			for (uint64_t i = 0; i < N; i++) {
 				// Quantize the phase values
 				level = QuantisePhase(phase[i + j * N + n * phase_elements]);
-				// Encode the phase values into the hologram
-				hologram[4 * (2 * i + 0) + (2 * j + 1) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 0] << offset;
-				hologram[4 * (2 * i + 0) + (2 * j + 0) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 1] << offset;
-				hologram[4 * (2 * i + 1) + (2 * j + 1) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 2] << offset;
-				hologram[4 * (2 * i + 1) + (2 * j + 0) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 3] << offset;
-
-
-				hologram[4 * (2 * i + 0) + (2 * j + 1) * (4 * 2 * N) + 3] = 255;
-				hologram[4 * (2 * i + 0) + (2 * j + 0) * (4 * 2 * N) + 3] = 255;
-				hologram[4 * (2 * i + 1) + (2 * j + 1) * (4 * 2 * N) + 3] = 255;
-				hologram[4 * (2 * i + 1) + (2 * j + 0) * (4 * 2 * N) + 3] = 255;
+				hologram[i + j * N] = level;
 			};
 		};
 		holo++;
@@ -756,93 +683,71 @@ void DebugWindow(
 
 	if (!show) return;
 
-	ImGui::Begin("PLM Debug Panel");
+	ImGui::Begin("SLM Debug Panel");
 	ImGui::Text("Frametime %f ms (%f Hz)", 1000.0 * io.DeltaTime, io.Framerate);
-	ImGui::Text("Framerate needs to match PLM's");
+	ImGui::Text("Framerate needs to match SLM's");
 
 
 #ifndef INCLUDE_LIGHTCRAFTER_WRAPPERS
-	ImGui::SeparatorText("!! Warning !!");
-	ImGui::Text("- This version does not support commanding the PLM to Play/Stop the sequence display");
+	ImGui::SeparatorText("Warning");
+	ImGui::Text("- This version does not support commanding the SLM to Play/Stop the sequence display");
 	ImGui::Text("- To enable this feature, follow the Wiki entry on this topic");
+	ImGui::Separator();
 #else
-	ImGui::SeparatorText("PLM Status");
-	if (PLM::IsConnected() == false) {
-		PLM::Open();
-		PLM::GetVersion();
+	ImGui::SeparatorText("SLM Status");
+	if (SLM::IsConnected() == false) {
+		SLM::Open();
+		SLM::GetVersion();
 	};
-	Status(plm_connected);
-	plm_connected = PLM::IsConnected();
-	ImGui::Text("%d.%d.%d", (PLM::App_ver >> 24), ((PLM::App_ver << 8) >> 24), ((PLM::App_ver << 16) >> 16));
-	ImGui::BeginDisabled(!plm_connected);
-	Status(plm_is_displaying);
+	Status(slm_connected);
+	slm_connected = SLM::IsConnected();
+	ImGui::Text("%d.%d.%d", (SLM::App_ver >> 24), ((SLM::App_ver << 8) >> 24), ((SLM::App_ver << 16) >> 16));
+	ImGui::BeginDisabled(!slm_connected);
+	Status(slm_is_displaying);
 	if (ImGui::Button("Start")) {
-		PLM::Play();
-		plm_is_displaying = true;
+		SLM::Play();
+		slm_is_displaying = true;
 	};
 	ImGui::SameLine();
 	if (ImGui::Button("Stop")) {
-		PLM::Stop();
-		plm_is_displaying = false;
+		SLM::Stop();
+		slm_is_displaying = false;
 	};
 	ImGui::EndDisabled();
+	ImGui::Separator();
 #endif
 
 
-	//Status(first_frame_trigger);
-	ImGui::SeparatorText("Sequence");
-	ImGui::Text("Frames to play: %d/%d", frames_to_play, frames_in_sequence);
-	ImGui::Text("Buffer Index %d/%d", 24 * buffer_index, 24 * frames_in_sequence);
-
-	ImGui::Text("Frame order:");
+	//Status(first_hologram_trigger);
+	ImGui::Text("Holograms to play: %d/%d", holograms_to_play, holograms_in_sequence);
+	ImGui::Text("Buffer Index %d/%d", 24 * buffer_index, 24 * holograms_in_sequence);
+	ImGui::Text("Hologram pointer [%p]", slm_image_ptr);
+	ImGui::Text("Hologram index: [%d], Hologram [%d]", hologram_index, hologram_order[hologram_index % MAX_HOLOGRAMS]);
+	ImGui::SameLine();
+	if (ImGui::ArrowButton("##left", ImGuiDir_Left)) { hologram_index--; hologram_index = clamp(hologram_index, 0, MAX_HOLOGRAMS - 1); }
+	ImGui::SameLine();
+	if (ImGui::ArrowButton("##right", ImGuiDir_Right)) { hologram_index++; hologram_index = clamp(hologram_index, 0, MAX_HOLOGRAMS - 1); }
+	// Display hologram_order array
+	ImGui::Text("Hologram order:");
 	ImGui::SameLine();
 	ImGui::Text("[");
 	ImGui::SameLine();
-	for (int i = 0; i < (MAX_FRAMES <= 4 ? (MAX_FRAMES - 1) : 4); ++i) {
-		ImGui::Text("%llu", frame_order[i]);
+	for (int i = 0; i < (MAX_HOLOGRAMS <= 4 ? (MAX_HOLOGRAMS - 1) : 4); ++i) {
+		ImGui::Text("%llu", hologram_order[i]);
 		ImGui::SameLine();
 	};
-	ImGui::Text("... %llu], total: %d", frame_order[MAX_FRAMES - 1], MAX_FRAMES);
-
-	ImGui::SeparatorText("Frame Data");
-	if (ImGui::TreeNode("Frame on display")) {
-		static ImVec2 ulim = ImVec2(0.0f, 1.0f);
-		static ImVec2 vlim = ImVec2(0.0f, 1.0f);
-		ImGui::Image((void*)data_texture_srv, ImVec2((float)N / 4, (float)M / 4), ImVec2(ulim.x, vlim.x), ImVec2(ulim.y, vlim.y));
-		ImVec2 pos = ImGui::GetCursorScreenPos();
-		ImGui::TreePop();
-	};
-	ImGui::Text("Frame pointer [%p]", plm_image_ptr);
-	ImGui::Text("Frame index: [%d], Frame [%d]", frame_index, frame_order[frame_index % MAX_FRAMES]);
-	//ImGui::SliderInt("Frame index", &frame_index, 0, MAX_FRAMES - 1);
-	ImGui::SameLine();
-	if (ImGui::ArrowButton("##left", ImGuiDir_Left)) { frame_index--; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
-	ImGui::SameLine();
-	if (ImGui::ArrowButton("##right", ImGuiDir_Right)) { frame_index++; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
-
-	ImGui::SeparatorText("LUT");
+	ImGui::Text("... %llu], total: %d", hologram_order[MAX_HOLOGRAMS - 1], MAX_HOLOGRAMS);
 	ImGui::PlotLines("LUT", phases, 17);
-	// Display phase_map
-	if (ImGui::TreeNode("Phase map [0...15]: ")) {
-
-		for (int j = 0; j < 4; j++) {
-			for (int i = 0; i < 16; i++) {
-				Bit(phase_map[i * 4 + j], i < 15);
-			};
-		};
-		ImGui::TreePop();
-	};
-
-	ImGui::SeparatorText("Stats");
+	ImGui::Separator();
 	ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
 	ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
 	ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
 
-	ImGui::End();
 
+	ImGui::End();
 };
 
-#ifdef PLM_DEBUG
+#ifdef SLM_DEBUG
 int main() {
 
 	StartUI(48);

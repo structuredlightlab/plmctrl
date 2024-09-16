@@ -21,7 +21,7 @@
     <None Include="cpp.hint" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="plmctrl.h">
+    <ClInclude Include="slmctrl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\imgui\imconfig.h">
@@ -66,7 +66,7 @@
     <ClInclude Include="include\imgui\imgui_impl_win32.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\PLM\PLM.h">
+    <ClInclude Include="include\PLM\SLM.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\PLM\API.h">
@@ -83,7 +83,7 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="plmctrl.cpp">
+    <ClCompile Include="slmctrl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="include\imgui\implot_demo.cpp">
