@@ -57,28 +57,16 @@
     <ClInclude Include="include\imgui\imstb_truetype.h">
       <Filter>imgui</Filter>
     </ClInclude>
-    <ClInclude Include="include\PLM\hidapi.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="include\imgui\imgui_impl_dx11.h">
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="include\imgui\imgui_impl_win32.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\PLM\SLM.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\PLM\API.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\PLM\common.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\PLM\usb.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="include\helpers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\SLM\SLM.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

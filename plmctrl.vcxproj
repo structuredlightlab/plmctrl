@@ -176,11 +176,7 @@
     <ClInclude Include="include\helpers.h" />
     <ClInclude Include="include\imgui\imgui_impl_dx11.h" />
     <ClInclude Include="include\imgui\imgui_impl_win32.h" />
-    <ClInclude Include="include\PLM\API.h" />
-    <ClInclude Include="include\PLM\common.h" />
-    <ClInclude Include="include\PLM\hidapi.h" />
-    <ClInclude Include="include\PLM\SLM.h" />
-    <ClInclude Include="include\PLM\usb.h" />
+    <ClInclude Include="include\SLM\SLM.h" />
     <ClInclude Include="slmctrl.h" />
     <ClInclude Include="include\imgui\imconfig.h" />
     <ClInclude Include="include\imgui\imgui.h" />

@@ -211,13 +211,12 @@ int UI()
 	timepoint end;
 
 
-
 	// Hologram texture (holds the bitpacked holograms)
-	desc.Width = 2 * N;
-	desc.Height = 2 * M;
+	desc.Width = N;
+	desc.Height = M;
 	desc.MipLevels = 1;
 	desc.ArraySize = 1;
-	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.Format = DXGI_FORMAT_R8_UNORM;
 	desc.SampleDesc.Count = 1;
 	desc.Usage = D3D11_USAGE_DYNAMIC;
 	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -316,7 +315,7 @@ int UI()
 		ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 		ImGui::End();
 
-		static uint64_t hologram_elements = 4 * (2 * N) * (2 * M);
+		static uint64_t hologram_elements =  N * M;
 		if (holograms_to_play == holograms_in_sequence && sequence_active) {
 			slm_mode = SLM_PLAYING;
 			hologram_index = 0;

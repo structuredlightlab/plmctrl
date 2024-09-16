@@ -57,8 +57,6 @@ namespace SLM {
 		std::mutex* mutex,
 		int x0 = 0, int y0 = 0) {
 
-		static int imgWidth = N / 4, imgHeight = M / 4;
-
 		const ImGuiViewport* viewport = ImGui::GetMainViewport();
 		ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
 		ImGui::SetNextWindowSize(ImVec2((float)N, (float)M), ImGuiCond_Always);
@@ -92,8 +90,8 @@ namespace SLM {
 		for (UINT row = 0; row < M; ++row) {
 			// Copy each row, taking into account the pitch
 			memcpy(dest + row * mapped_resource.RowPitch,
-				src + row * N * 4 * sizeof(uint8_t),
-				N * 4 * sizeof(uint8_t));
+				src + row * N * sizeof(uint8_t),
+				N * sizeof(uint8_t));
 		}
 
 		g_pd3dDeviceContext->Unmap(pTexture, 0);
@@ -105,7 +103,7 @@ namespace SLM {
 		static ImVec2 ulim = ImVec2(0.0f, 1.0f);
 		static ImVec2 vlim = ImVec2(0.0f, 1.0f);
 
-		int img_width = imgWidth, img_height = imgHeight;
+		int img_width = N, img_height = M;
 
 		img_width = N;
 		img_height = M;
