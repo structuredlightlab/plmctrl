@@ -1,7 +1,8 @@
 # <img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl 
 
 ![Warning](https://img.shields.io/badge/under%20development%20-yellow)
-[![arXiv](https://img.shields.io/badge/arXiv-2409.01289-<COLOR>.svg)](https://arxiv.org/abs/2409.01289)
+[![arXiv](https://img.shields.io/badge/arXiv-2409.01289-green.svg)](https://arxiv.org/abs/2409.01289)
+[![Journal](https://img.shields.io/badge/Optics-Express-green.svg)](https://opg.optica.org/oe/fulltext.cfm?uri=oe-32-24-43300&id=563432)
 ![Warning](https://img.shields.io/badge/version-0.1.2a-red)
 <div style="display: flex; align-items: center;">
     <div>
