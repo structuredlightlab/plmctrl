@@ -1,8 +1,8 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Structured Light Lab
- * Version: 0.1.3 alpha
- * Date: 07/Sep/2024
+ * Version: 0.2.0 alpha
+ * Date: 22/Nov/2024
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
@@ -27,7 +27,7 @@
  */
 
 
- // To be defined if compiled as an executable
+// To be defined if compiled as an executable
 // #define PLM_DEBUG
 
 #include "imgui/imgui.h"
@@ -72,7 +72,7 @@ bool isSetupDone = false;
 uint8_t* plm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex plm_image_mutex;
-int N = 1920 / 4, M = 1080 / 4, monitor_id = 0;
+int N = 1358, M = 800, monitor_id = 0;
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
 
@@ -98,11 +98,13 @@ long long t0 = 0;
 bool camera_trigger = false;
 bool show_debug_window = true;
 
+RECT monitorRect;
+
 std::chrono::duration<double> elapsed_content;
 std::chrono::duration<double> elapsed_buffer;
 std::chrono::duration<double> elapsed_total;
 
-unsigned int MAX_FRAMES = 48;
+uint64_t MAX_FRAMES = 64;
 std::vector<uint8_t> frame_set;
 std::vector<uint64_t> frame_order;
 
@@ -143,7 +145,10 @@ bool Cleanup() {
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	StopUI();
 	return true;
-}
+};
+
+int Play() {return PLM::Play();};
+int Stop() {return PLM::Stop();};
 
 bool StartSequence(int number_of_frames) {
 
@@ -163,8 +168,8 @@ bool StartSequence(int number_of_frames) {
 int UI()
 {
 
-	RECT monitorRect;
-	if (!GetSecondMonitorRect(monitorRect)) {
+
+	if (!GetSecondMonitorRect(monitorRect, monitor_id)) {
 		std::cerr << "Second monitor not found!" << std::endl;
 		return 1;
 	}
@@ -174,13 +179,16 @@ int UI()
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"plmctrl", nullptr };
 	::RegisterClassExW(&wc);
 
+	monitorRect.left = 1920;
+	monitorRect.top = 0;
+
 	HWND hwnd = ::CreateWindowEx(
 		WS_EX_TOPMOST, // dwExStyle: No extended styles
 		wc.lpszClassName,
 		L"plmctrl",
 		WS_POPUP | WS_VISIBLE,
-		monitorRect.left, monitorRect.top,
-		monitorRect.right - monitorRect.left, monitorRect.bottom - monitorRect.top,
+		1920, 0,
+		2716, 1600,
 		nullptr,
 		nullptr,
 		wc.hInstance,
@@ -213,7 +221,7 @@ int UI()
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
 	io.ConfigDockingWithShift = true; // Enable docking with shift key
-	io.ConfigFlags& ImGuiConfigFlags_ViewportsEnable ? std::cout << "true" << std::endl : std::cout << "false" << std::endl;
+	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)  std::cout << "[plmctrl]: Viewports enabled" << std::endl;
 
 	// Setup Dear ImGui style
 	ImGui::StyleColorsDark();
@@ -241,7 +249,6 @@ int UI()
 	timepoint end_total;
 	timepoint start;
 	timepoint end;
-
 
 
 	// Frame texture (holds the bitpacked holograms)
@@ -278,7 +285,7 @@ int UI()
 
 			camera_trigger = false;
 
-			std::cout << "Sequence finished" << std::endl;
+			//std::cout << "Sequence finished" << std::endl;
 		};
 
 
@@ -397,13 +404,13 @@ int UI()
 			camera_trigger = true;
 			buffer_index = 0;
 			t0 = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
-			std::cout << "FIRST FRAME TRIGGER" << std::endl;
+			//std::cout << "[plmctrl]: First frame trigger" << std::endl;
 			PLM::Play(); // This only works if LightCrafter wrappers are included
 
 		};
-		if (plm_mode == PLM_PLAYING) {
-			std::cout << "Buffer Index on plmctrl: " << buffer_index << std::endl;
-		}
+		//if (plm_mode == PLM_PLAYING) {
+		//	std::cout << "[plmctrl]: Buffer Index on plmctrl: " << buffer_index << std::endl;
+		//}
 
 		end = std::chrono::high_resolution_clock::now();
 		elapsed_buffer = end - start;
@@ -442,6 +449,11 @@ void StartUI(unsigned int number_of_frames) {
 
 	MAX_FRAMES = number_of_frames;
 
+	frame_order.resize(MAX_FRAMES);
+	for (int i = 0; i < MAX_FRAMES; i++) {
+		frame_order[i] = i;
+	};
+
 	if (running) {
 		StopUI();
 		StartUI(number_of_frames);
@@ -454,7 +466,6 @@ void StartUI(unsigned int number_of_frames) {
 	frame_set.resize(4 * (2 * N) * (2 * M) * MAX_FRAMES);
 	std::fill(frame_set.begin(), frame_set.end(), 255);
 
-	frame_order.resize(MAX_FRAMES);
 
 #ifndef PLM_DEBUG
 	std::cout << "Starting UI thread" << std::endl;
@@ -530,32 +541,33 @@ bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, uns
 		return false;
 	};
 
-	std::cout << "Inserting " << num_frames << " frames at offset " << offset << std::endl;
+	//std::cout << "Inserting " << num_frames << " frames at offset " << offset << std::endl;
 
 	uint64_t rgb_elements = (2 * N) * (2 * M);
 	uint64_t frame_elements = 4 * rgb_elements;
 	uint64_t total_elements = num_frames * frame_elements;
 	int k = 0;
+
 	if (type == 0) {
-		std::cout << "Type: RGB" << std::endl;
+		//std::cout << "Type: RGB" << std::endl;
 		for (uint64_t n = 0; n < num_frames; n++) {
 			for (uint64_t i = 0; i < rgb_elements; i++) {
 				frame_set.at(4 * i + (n + offset) * frame_elements + 0) = frame[3 * i + n * (3 * rgb_elements) + 0];
 				frame_set.at(4 * i + (n + offset) * frame_elements + 1) = frame[3 * i + n * (3 * rgb_elements) + 1];
 				frame_set.at(4 * i + (n + offset) * frame_elements + 2) = frame[3 * i + n * (3 * rgb_elements) + 2];
 			};
-			std::cout << "Frame " << n << " inserted" << std::endl;
+			//std::cout << "Frame " << n << " inserted" << std::endl;
 		};
 	}
 	else if (type == 1) {
-		std::cout << "Type: RGBA" << std::endl;
-		frame_set.insert(
-			frame_set.begin() + offset * frame_elements,
+		//std::cout << "Type: RGBA" << std::endl;
+		std::copy(
 			frame,
-			frame + total_elements
+			frame + total_elements,
+			frame_set.begin() + offset * frame_elements
 		);
 	};
-	std::cout << num_frames << " frames inserted" << std::endl;
+	//std::cout << num_frames << " frames inserted" << std::endl;
 
 	return true;
 };
@@ -569,9 +581,9 @@ bool SetPLMFrame(unsigned long long offset = 0) {
 
 	frame_index = offset;
 
-	for (int i = 0; i < MAX_FRAMES; i++) {
-		frame_order[i] = offset;
-	};
+	//for (int i = 0; i < MAX_FRAMES; i++) {
+	//	frame_order[i] = offset;
+	//};
 
 	return true;
 };
@@ -759,6 +771,7 @@ void DebugWindow(
 	ImGui::Begin("PLM Debug Panel");
 	ImGui::Text("Frametime %f ms (%f Hz)", 1000.0 * io.DeltaTime, io.Framerate);
 	ImGui::Text("Framerate needs to match PLM's");
+	ImGui::Text("Left: %d, Right: %d, Top: %d, Bottom: %d", monitorRect.left, monitorRect.right, monitorRect.top, monitorRect.bottom);
 
 
 #ifndef INCLUDE_LIGHTCRAFTER_WRAPPERS
@@ -814,11 +827,17 @@ void DebugWindow(
 	};
 	ImGui::Text("Frame pointer [%p]", plm_image_ptr);
 	ImGui::Text("Frame index: [%d], Frame [%d]", frame_index, frame_order[frame_index % MAX_FRAMES]);
-	//ImGui::SliderInt("Frame index", &frame_index, 0, MAX_FRAMES - 1);
 	ImGui::SameLine();
 	if (ImGui::ArrowButton("##left", ImGuiDir_Left)) { frame_index--; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
 	ImGui::SameLine();
 	if (ImGui::ArrowButton("##right", ImGuiDir_Right)) { frame_index++; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
+
+	static int frame_index_i32 = 0;
+	frame_index_i32 = frame_index;
+	if (ImGui::SliderInt("Frame index", &frame_index_i32, 0, MAX_FRAMES - 1)) {
+		frame_index = clamp(frame_index_i32, 0, MAX_FRAMES - 1);
+	};
+
 
 	ImGui::SeparatorText("LUT");
 	ImGui::PlotLines("LUT", phases, 17);
@@ -845,7 +864,7 @@ void DebugWindow(
 #ifdef PLM_DEBUG
 int main() {
 
-	StartUI(48);
+	StartUI(MAX_FRAMES);
 	return 0;
 }
 #endif

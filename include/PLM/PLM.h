@@ -1,6 +1,6 @@
 #pragma once
 
-// #define INCLUDE_LIGHTCRAFTER_WRAPPERS
+#define INCLUDE_LIGHTCRAFTER_WRAPPERS
 
 #ifdef INCLUDE_LIGHTCRAFTER_WRAPPERS
 #include <PLM/API.h>
@@ -37,6 +37,12 @@ namespace PLM {
 			return 0;
 		};
 		int Stop() {
+			return 0;
+		};
+		int Open() {
+			return 0;
+	};
+		int Close() {
 			return 0;
 		};
 	}
@@ -89,11 +95,11 @@ namespace PLM {
 		uint8_t* dest = static_cast<uint8_t*>(mapped_resource.pData);
 		uint8_t* src = static_cast<uint8_t*>(data);
 
-		for (UINT row = 0; row < M; ++row) {
+		for (uint64_t row = 0; row < M; ++row) {
 			// Copy each row, taking into account the pitch
 			memcpy(dest + row * mapped_resource.RowPitch,
 				src + row * N * 4 * sizeof(uint8_t),
-				N * 4 * sizeof(uint8_t));
+				(uint64_t) N * 4 * sizeof(uint8_t));
 		}
 
 		g_pd3dDeviceContext->Unmap(pTexture, 0);

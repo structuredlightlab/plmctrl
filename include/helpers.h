@@ -12,7 +12,7 @@ struct MonitorData {
 //////////////////// DirectX helpers ////////////////////
 
 // Function to find the second monitor
-bool GetSecondMonitorRect(RECT& rect)
+bool GetSecondMonitorRect(RECT& rect, int monitor_id)
 {
 	MonitorData data = { 0, {0, 0, 0, 0} };
 	bool foundSecondMonitor = false;
@@ -24,7 +24,7 @@ bool GetSecondMonitorRect(RECT& rect)
 			monitorInfo.cbSize = sizeof(MONITORINFO);
 			if (GetMonitorInfo(hMonitor, &monitorInfo))
 			{
-				if (monitorData->monitorIndex == 1)  // We're looking for the second monitor (index 1)
+				if (monitorData->monitorIndex == 2)  // We're looking for the second monitor (index 1)
 				{
 					monitorData->monitorRect = monitorInfo.rcMonitor;
 					return FALSE;  // Stop enumeration after finding the second monitor
@@ -34,7 +34,7 @@ bool GetSecondMonitorRect(RECT& rect)
 			return TRUE;  // Continue enumeration
 		}, reinterpret_cast<LPARAM>(&data));
 
-	if (data.monitorIndex == 1)  // Ensure that the second monitor was found
+	if (data.monitorIndex == 2)  // Ensure that the second monitor was found
 	{
 		rect = data.monitorRect;
 		foundSecondMonitor = true;

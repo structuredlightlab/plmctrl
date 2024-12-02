@@ -25,12 +25,13 @@ extern "C" {
 	PLM_API void SetLookupTable(double*);
 	PLM_API bool SetFrameSequence(unsigned long long*, unsigned long long length);
 	PLM_API bool SetPLMFrame(unsigned long long offset);
-	PLM_API bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frame, unsigned long long offset, int type);
-	PLM_API int QueryPLMMode();
-	PLM_API bool QueryCameraTrigger();
-	PLM_API long int QueryBufferIndex();
-	PLM_API long long GetT0();
+	PLM_API bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames, unsigned long long offset, int type);
 	PLM_API void ResetUI();
+
+	PLM_API int Play();
+	PLM_API int Stop();
+	PLM_API int Open();
+	PLM_API int Close();
 
 #ifdef __cplusplus
 }

@@ -116,5 +116,11 @@
     <ClCompile Include="include\imgui\imgui_tables.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="include\PLM\API.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="include\PLM\usb.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

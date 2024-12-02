@@ -4,12 +4,12 @@ addpath('../');
 addpath('../bin/')
 
 %%
-MAX_FRAMES = 12;
+MAX_FRAMES = 452;
 
 % Set monitor size
 % PLM is N = 1358 by M = 800
-N = 1920/2;
-M = 1080/2;
+N = 1358;
+M = 800;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
