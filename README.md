@@ -1,7 +1,8 @@
 # <img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl 
 
 ![Warning](https://img.shields.io/badge/under%20development%20-yellow)
-[![arXiv](https://img.shields.io/badge/arXiv-2409.01289-<COLOR>.svg)](https://arxiv.org/abs/2409.01289)
+[![arXiv](https://img.shields.io/badge/arXiv-2409.01289-green.svg)](https://arxiv.org/abs/2409.01289)
+[![Journal](https://img.shields.io/badge/Optics-Express-green.svg)](https://opg.optica.org/oe/fulltext.cfm?uri=oe-32-24-43300&id=563432)
 ![Warning](https://img.shields.io/badge/version-0.1.2a-red)
 <div style="display: flex; align-items: center;">
     <div>
@@ -22,18 +23,21 @@
 
 <img src="https://github.com/user-attachments/assets/617a1f9a-7be8-4c00-a289-ed66f41fd31b" alt="mirrors_low" style="width: 100%; margin-right: 20px;">
 
-```plmctrl``` is an open source library for controlling the 0.67" (DLP6750 EVM) Texas-Instruments Phase-only Light Modulator (PLM). This library is a C++/DirectX code that handles the whole process from a matrix of ***continous phase values*** → ***prepare the hologram*** → ***display the hologram on the screen***. When displaying different holograms in a sequence, frame-pacing is also ensured.
+```plmctrl``` is an open source library for controlling the 0.67" (DLP6750 EVM) Texas-Instruments Phase-only Light Modulator (PLM). This library is a C++/DirectX code that handles the whole process from a matrix of ***continuous phase values*** → ***prepare the hologram*** → ***display the hologram on the screen***. When displaying different holograms in a sequence, frame-pacing is also ensured.
 
 If you have used ```plmctrl``` in a scientific publication, we would appreciate citation to the following reference:
 ```bibtex
-@misc{rocha2024fastlightefficientwavefrontshaping,
-      title={Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator}, 
-      author={José C. A. Rocha and Terry Wright and Unė G Būtaitė and Joel Carpenter and George S. D. Gordon and David B. Phillips},
-      year={2024},
-      eprint={2409.01289},
-      archivePrefix={arXiv},
-      primaryClass={physics.optics},
-      url={https://arxiv.org/abs/2409.01289}, 
+@article{rocha2024plm,
+    author = {Jos\'{e} C. A. Rocha and Terry Wright and Un\.{e} G. B\={u}tait\.{e} and Joel Carpenter and George S. D. Gordon and David B. Phillips},
+    journal = {Opt. Express},
+    number = {24},
+    pages = {43300--43314},
+    publisher = {Optica Publishing Group},
+    title = {Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator},
+    volume = {32},
+    month = {Nov},
+    year = {2024},
+    url = {https://opg.optica.org/oe/abstract.cfm?URI=oe-32-24-43300}
 }
 ```
 
@@ -71,15 +75,16 @@ for i = 1:numHolograms
 end
 
 % ---- Bitpacks 24 holograms into a single RGB frame ---- 
-frame = plm.BipackHolograms(phase);
+frame = plm.BitpackHolograms(phase);
 
 % ---- Uploads a bitpacked hologram to the PLM ----
 offset = 0;
-plm.InsertFrames(frame, offset);
+format = 1; % RGBA = 1, RGB = 0
+plm.InsertFrames(frame, offset, format);
 
 % If you need to set a sequence or start it, you can do so:
 plm.SetHologramSequence(0:MAX_FRAMES-1);  % Set to display the bitpacked holograms in a sequence
-plm.StartSequence(MAX_FRAMES);  % Display MAX_HOLOGRAMS hologram in a sequence following the sequence
+plm.StartSequence(MAX_FRAMES);  % Display MAX_HOLOGRAMS hologram in a sequence following the sequence order
 
 % When you're done:
 plm.Cleanup();
