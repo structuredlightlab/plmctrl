@@ -3,18 +3,16 @@ clearvars;
 addpath('../');
 addpath('../bin/')
 
-%%
-MAX_FRAMES = 452;
+MAX_FRAMES = 64;
 
 % Set monitor size
 % PLM is N = 1358 by M = 800
-N = 1358;
-M = 800;
+N = 100;
+M = 100;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
 
-%% Start the UI
 monitorId = 1; % This parameter is not currently working.
 plm.StartUI(monitorId);
 
@@ -89,29 +87,34 @@ wedge = @(alpha, beta) alpha*x + beta*y;
 
 % Generate multiple holograms
 numHolograms = 24;
-phase = zeros(N, M, numHolograms);
+phase = zeros(N, M, numHolograms, 'single');
 frame_set = zeros(4*2*N, 2*M, MAX_FRAMES, 'uint8');
 
-for j = 1:MAX_FRAMES
+for j = 1:1
     fprintf("MATLAB: Generating bitpacked hologram #%d\n",j);
     for i = 1:numHolograms
         alpha = 2*(rand() - 0.5);
         beta = 2*(rand() - 0.5);
         phase(:,:,i) = mod(wedge(alpha, beta), 2*pi)/(2*pi);
     end
-    frame = plm.BitpackHolograms(phase);
-    frame_set(:,:,j) = frame;
+    tic
+    frame = plm.BitpackHologramsGPU(phase);
+    toc
+%     tic
+%     frame = plm.BitpackHolograms(phase);
+%     toc
+%     frame_set(:,:,j) = frame;
 end
 
 % Uploads a bunch of frames to the PLM memory starting at index 0 (=offset)
 offset = 0;
 format = 1; % RGBA
-plm.InsertFrames(frame_set, offset, format);
+plm.InsertFrames(frame, offset, format);
 
 sequence = (0:MAX_FRAMES-1);
 plm.SetFrameSequence(sequence);
 
-% plm.SetFrame(0); % First frame
+plm.SetFrame(0); % First frame
 
 %%
 sequence = (0:MAX_FRAMES-1);

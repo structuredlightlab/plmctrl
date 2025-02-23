@@ -34,6 +34,7 @@ function plm = PLMController(MAX_FRAMES, width, height)
     plm.SetFrame = @SetFrame;                % Set a specific frame to display
     plm.SetPhaseMap = @SetPhaseMap;          % Set the phase map for holograms
     plm.BitpackHolograms = @BitpackHolograms;  % Create and bit-pack holograms from phase data
+    plm.BitpackHologramsGPU = @BitpackHologramsGPU;
     plm.Cleanup = @cleanup;                  % Unload the library and cleanup resources
 
     % Function to setup the PLM window on a specified monitor
@@ -85,17 +86,35 @@ function plm = PLMController(MAX_FRAMES, width, height)
 
     % Function to create and bit-pack holograms from phase data
     function frame = BitpackHolograms(phase)
-        validateattributes(phase, {'double'}, {'3d', '>=', 0, '<=', 1'});
+        validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
         % Initialize an empty array to hold the bit-packed hologram
         numPatterns = size(phase, 3);
         frame = zeros(4*2*plm.N, 2*plm.M, 'uint8');
         
         % Prepare pointers to the phase data and the hologram array
-        phasePtr = libpointer('doublePtr', phase);
+        phasePtr = libpointer('singlePtr', phase);
         hologramPtr = libpointer('uint8Ptr', frame);
         
         % Bit-pack the holograms using the library function
         calllib('plmctrl', 'BitpackHolograms', phasePtr, hologramPtr, plm.N, plm.M, numPatterns);
+        
+        % Retrieve the bit-packed hologram
+        frame = hologramPtr.Value;
+    end
+
+    % Function to create and bit-pack holograms from phase data
+    function frame = BitpackHologramsGPU(phase)
+        validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
+        % Initialize an empty array to hold the bit-packed hologram
+        numPatterns = size(phase, 3);
+        frame = zeros(4*2*plm.N, 2*plm.M, 'uint8');
+        
+        % Prepare pointers to the phase data and the hologram array
+        phasePtr = libpointer('singlePtr', phase);
+        hologramPtr = libpointer('uint8Ptr', frame);
+        
+        % Bit-pack the holograms using the library function
+        calllib('plmctrl', 'BitpackHologramsGPU', phasePtr, hologramPtr, plm.N, plm.M, numPatterns);
         
         % Retrieve the bit-packed hologram
         frame = hologramPtr.Value;

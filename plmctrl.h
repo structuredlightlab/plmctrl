@@ -17,7 +17,13 @@ extern "C" {
 	PLM_API bool SetPhaseMap(int* new_phase_map);
 	PLM_API void SetPLMWindowPos(int width, int height, int monitor);
 	PLM_API bool BitpackHolograms(
-		double* phase,
+		float* phase,
+		unsigned char* frame,
+		unsigned long long N,
+		unsigned long long M,
+		int num_holograms);
+	PLM_API bool BitpackHologramsGPU(
+		float* phase,
 		unsigned char* frame,
 		unsigned long long N,
 		unsigned long long M,

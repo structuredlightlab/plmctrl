@@ -59,6 +59,7 @@ namespace PLM {
 		ID3D11ShaderResourceView* data_texture_view,
 		ID3D11Device* g_pd3dDevice,
 		ID3D11DeviceContext* g_pd3dDeviceContext,
+		ID3D11SamplerState* pSamplerState,
 		ImGuiIO& io, int N, int M,
 		std::mutex* mutex,
 		int x0 = 0, int y0 = 0) {
@@ -90,6 +91,7 @@ namespace PLM {
 		ID3D11Texture2D* pTexture = NULL;
 		data_texture_view->GetResource((ID3D11Resource**)&pTexture);
 		g_pd3dDeviceContext->Map(pTexture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource);
+		//g_pd3dDeviceContext->PSSetSamplers(0, 1, &pSamplerState);
 		//start = std::chrono::high_resolution_clock::now();
 
 		uint8_t* dest = static_cast<uint8_t*>(mapped_resource.pData);

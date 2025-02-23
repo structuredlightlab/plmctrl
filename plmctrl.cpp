@@ -1,7 +1,7 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Structured Light Lab
- * Version: 0.2.0 alpha
+ * Version: 0.4.0 alpha
  * Date: 22/Nov/2024
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
@@ -28,12 +28,13 @@
 
 
 // To be defined if compiled as an executable
-// #define PLM_DEBUG
+#define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
 #include "imgui/imgui_impl_dx11.h"
 #include <d3d11.h>
+#include <d3dcompiler.h>
 #include <tchar.h>
 
 #define WIN32_LEAN_AND_MEAN  // Exclude rarely-used stuff from Windows headers
@@ -53,6 +54,7 @@
 
 #include "helpers.h"
 
+typedef struct { unsigned x, y, z, w; } uint4;
 
 
 // DirectX Stuff
@@ -66,13 +68,51 @@ ID3D11Texture2D* pTexture = nullptr;
 ID3D11ShaderResourceView* data_texture_srv = nullptr;
 D3D11_TEXTURE2D_DESC desc = {};
 
+// Bitpack Compute Shader declarations
+static ID3D11ComputeShader* g_pComputeShader = nullptr;
+static ID3D11Buffer* g_pConstantBuffer = nullptr;
+static ID3D11Buffer* g_pPhaseBuffer = nullptr;
+static ID3D11Buffer* g_pLUTBuffer = nullptr;
+static ID3D11Buffer* g_pPhaseMapBuffer = nullptr;
+
+static ID3D11ShaderResourceView* g_pPhaseSRV = nullptr;
+static ID3D11ShaderResourceView* g_pLUTSRV = nullptr;
+static ID3D11ShaderResourceView* g_pPhaseMapSRV = nullptr;
+
+static ID3D11Buffer* g_pHologramBuffer = nullptr;
+static ID3D11UnorderedAccessView* g_pHologramUAV = nullptr;
+ID3D11Texture2D* pHologramTexture = nullptr;
+ID3D11Texture2D* pStagingTexture;
+
+
+// 16 bytes
+struct c_Params {
+	uint32_t N;
+	uint32_t M;
+	uint32_t num_holograms;
+	uint32_t pad;
+};
+
+// 80 bytes
+struct c_LUT {
+	float phases[17];
+	float pad[3];
+};
+
+// 256 bytes
+struct c_PhaseMap {
+	int phase_map[64];
+};
+
 
 bool running = false;
 bool isSetupDone = false;
 uint8_t* plm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex plm_image_mutex;
-int N = 1358, M = 800, monitor_id = 0;
+//int N = 600, M = 600, monitor_id = 0;
+int N = 800, M = 800, monitor_id = 0;
+
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
 
@@ -90,6 +130,7 @@ bool first_frame_trigger = false;
 bool start_playing_trigger = false;
 bool plm_is_displaying = false;
 bool sequence_active = false;
+bool displaying_active = false;
 bool continuous_mode = false;
 int64_t frame_index = 0;
 int64_t buffer_index = -1;
@@ -138,8 +179,210 @@ void CleanupDeviceD3D();
 void CreateRenderTarget();
 void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
 void DebugWindow(bool show, ImGuiIO& io);
+
+bool CompileComputeShader(ID3D11Device* device)
+{
+	ID3DBlob* pBlob = nullptr;
+	ID3DBlob* pErrorBlob = nullptr;
+
+	HRESULT hr = D3DCompileFromFile(
+		L"BitpackHologramsCS.hlsl",
+		nullptr,
+		nullptr,
+		"main",
+		"cs_5_0",
+		0,
+		0,
+		&pBlob,
+		&pErrorBlob
+	);
+
+	if (FAILED(hr))
+	{
+		if (pErrorBlob)
+		{
+			// Print the error message to stderr
+			std::cerr << "Compute Shader Compilation Error: "
+				<< (char*)pErrorBlob->GetBufferPointer() << std::endl;
+			pErrorBlob->Release();
+		}
+		if (pBlob) pBlob->Release();
+		return false;
+	}
+
+	hr = device->CreateComputeShader(
+		pBlob->GetBufferPointer(),
+		pBlob->GetBufferSize(),
+		nullptr,
+		&g_pComputeShader
+	);
+
+	if (pBlob->GetBufferSize() == 0)
+	{
+		std::cerr << "Shader blob size is 0" << std::endl;
+		pBlob->Release();
+		return false;
+	}
+
+	pBlob->Release();
+	if (FAILED(hr))
+	{
+		std::cerr << "CreateComputeShader failed with HRESULT: 0x"
+			<< std::hex << hr << std::dec << std::endl;
+		return false;
+	}
+
+	return true;
+};
+
+bool InitBitpackResources()
+{
+	if (!g_pd3dDevice) return false;
+
+	HRESULT hr;
+	D3D11_BUFFER_DESC bufDesc = {};
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+
+
+
+	// Constant buffer for shader parameters
+	bufDesc = {};
+	bufDesc.ByteWidth = sizeof(c_Params);
+	bufDesc.Usage = D3D11_USAGE_DEFAULT;
+	bufDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	hr = g_pd3dDevice->CreateBuffer(&bufDesc, nullptr, &g_pConstantBuffer);
+	if (FAILED(hr)) return false;
+
+	// Phase buffer for input data, sized for max 24 holograms
+	const int max_num_holograms = 24;
+	bufDesc = {};
+	bufDesc.ByteWidth = sizeof(float) * N * M * max_num_holograms;
+	bufDesc.Usage = D3D11_USAGE_DEFAULT;
+	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	bufDesc.StructureByteStride = sizeof(float);
+	hr = g_pd3dDevice->CreateBuffer(&bufDesc, nullptr, &g_pPhaseBuffer);
+	if (FAILED(hr)) {
+		g_pConstantBuffer->Release();
+		g_pConstantBuffer = nullptr;
+		return false;
+	}
+
+	srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+	srvDesc.BufferEx.FirstElement = 0;
+	srvDesc.BufferEx.NumElements = N * M * max_num_holograms;
+	hr = g_pd3dDevice->CreateShaderResourceView(g_pPhaseBuffer, &srvDesc, &g_pPhaseSRV);
+	if (FAILED(hr)) {
+		g_pPhaseBuffer->Release();
+		g_pPhaseBuffer = nullptr;
+		g_pConstantBuffer->Release();
+		g_pConstantBuffer = nullptr;
+		return false;
+	}
+
+	//////////////
+	bufDesc = {};
+	bufDesc.ByteWidth = sizeof(float) * 17;
+	bufDesc.Usage = D3D11_USAGE_DEFAULT;
+	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	bufDesc.StructureByteStride = sizeof(float);
+	hr = g_pd3dDevice->CreateBuffer(&bufDesc, nullptr, &g_pLUTBuffer);
+
+	srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+	srvDesc.BufferEx.FirstElement = 0;
+	srvDesc.BufferEx.NumElements = 17;
+	hr = g_pd3dDevice->CreateShaderResourceView(g_pLUTBuffer, &srvDesc, &g_pLUTSRV);
+
+	//////////////
+	bufDesc = {};
+	bufDesc.ByteWidth = sizeof(int) * 64;
+	bufDesc.Usage = D3D11_USAGE_DEFAULT;
+	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	bufDesc.StructureByteStride = sizeof(int);
+	hr = g_pd3dDevice->CreateBuffer(&bufDesc, nullptr, &g_pPhaseMapBuffer);
+
+	srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+	srvDesc.BufferEx.FirstElement = 0;
+	srvDesc.BufferEx.NumElements = 64;
+	hr = g_pd3dDevice->CreateShaderResourceView(g_pPhaseMapBuffer, &srvDesc, &g_pPhaseMapSRV);
+
+	// Hologram buffer for output (corrected to match output size)
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = 2 * N;
+	texDesc.Height = 2 * M;
+	texDesc.MipLevels = 1;
+	texDesc.ArraySize = 1;
+	texDesc.Format = DXGI_FORMAT_R32_UINT;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+	texDesc.CPUAccessFlags = 0;
+	texDesc.MiscFlags = 0;
+
+	hr = g_pd3dDevice->CreateTexture2D(&texDesc, nullptr, &pHologramTexture);
+	if (FAILED(hr)) {
+		std::cout << "Failed to create hologram buffer with HRESULT: 0x"
+			<< std::hex << hr << std::dec << std::endl;		
+		g_pPhaseSRV->Release();
+		g_pPhaseSRV = nullptr;
+		g_pPhaseBuffer->Release();
+		g_pPhaseBuffer = nullptr;
+		g_pConstantBuffer->Release();
+		g_pConstantBuffer = nullptr;
+		return false;
+	}
+
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+	uavDesc.Format = DXGI_FORMAT_R32_UINT;
+	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+	uavDesc.Texture2D.MipSlice = 0;
+	hr = g_pd3dDevice->CreateUnorderedAccessView(pHologramTexture, &uavDesc, &g_pHologramUAV);
+	if (FAILED(hr)) {
+		std::cout << "Failed to create UAV with HRESULT: 0x"
+			<< std::hex << hr << std::dec << std::endl;
+		pHologramTexture->Release();
+		pHologramTexture = nullptr;
+		g_pPhaseSRV->Release();
+		g_pPhaseSRV = nullptr;
+		g_pPhaseBuffer->Release();
+		g_pPhaseBuffer = nullptr;
+		g_pConstantBuffer->Release();
+		g_pConstantBuffer = nullptr;
+		return false;
+	}
+
+	// Staging buffer to copy output to CPU
+	D3D11_TEXTURE2D_DESC stagingDesc = texDesc;
+	stagingDesc.Usage = D3D11_USAGE_STAGING;
+	stagingDesc.BindFlags = 0;
+	stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	hr = g_pd3dDevice->CreateTexture2D(&stagingDesc, nullptr, &pStagingTexture);
+	if (FAILED(hr)) {
+		g_pHologramUAV->Release();
+		g_pHologramUAV = nullptr;
+		pHologramTexture->Release();
+		pHologramTexture = nullptr;
+		g_pPhaseSRV->Release();
+		g_pPhaseSRV = nullptr;
+		g_pPhaseBuffer->Release();
+		g_pPhaseBuffer = nullptr;
+		g_pConstantBuffer->Release();
+		g_pConstantBuffer = nullptr;
+		return false;
+	}
+
+	return true;
+}
 
 bool Cleanup() {
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -164,35 +407,50 @@ bool StartSequence(int number_of_frames) {
 	return true;
 }
 
+bool StartDisplaying() {
+	// Start displaying continuously on the PLM
+	// Tailored for real-time applications.
+
+	displaying_active = true;
+	first_frame_trigger = true;
+
+	return true;
+}
+
+bool Resynchronise(unsigned long long offset) {
+	return true;
+}
+
 // Main code
 int UI()
 {
 
 
-	if (!GetSecondMonitorRect(monitorRect, monitor_id)) {
-		std::cerr << "Second monitor not found!" << std::endl;
-		return 1;
-	}
 
-	// Create application window
-	// ImGui_ImplWin32_EnableDpiAwareness();
+	//if (!GetSecondMonitorRect(monitorRect, monitor_id)) {
+	//	std::cerr << "Second monitor not found!" << std::endl;
+	//	return 1;
+	//}
+
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"plmctrl", nullptr };
 	::RegisterClassExW(&wc);
 
-	monitorRect.left = 1920;
+	monitorRect.left = 0;
 	monitorRect.top = 0;
 
-	HWND hwnd = ::CreateWindowEx(
-		WS_EX_TOPMOST, // dwExStyle: No extended styles
-		wc.lpszClassName,
-		L"plmctrl",
-		WS_POPUP | WS_VISIBLE,
-		1920, 0,
-		2716, 1600,
-		nullptr,
-		nullptr,
-		wc.hInstance,
-		nullptr
+	HWND hwnd = ::CreateWindowExW(
+		WS_EX_WINDOWEDGE,               // Extended style: Gives a raised edge
+		wc.lpszClassName,               // Class name: "plmctrl"
+		L"plmctrl",                     // Window title
+		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,  // Window style: Standard window with title bar
+		1920-400,                     // X position
+		0,                              // Y position
+		400,                            // Width
+		400,                            // Height
+		nullptr,                        // Parent window (none)
+		nullptr,                        // Menu (none)
+		wc.hInstance,                   // Instance handle
+		nullptr                         // Additional data (none)
 	);
 
 	// Initialize Direct3D
@@ -264,6 +522,20 @@ int UI()
 
 	g_pd3dDevice->CreateTexture2D(&desc, nullptr, &pTexture);
 	g_pd3dDevice->CreateShaderResourceView(pTexture, nullptr, &data_texture_srv);
+
+	D3D11_SAMPLER_DESC samplerDesc = {};
+	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT; // Nearest neighbor (no interpolation)
+	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+	samplerDesc.MinLOD = 0;
+	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+	ID3D11SamplerState* pSamplerState = nullptr;
+	g_pd3dDevice->CreateSamplerState(&samplerDesc, &pSamplerState);
+
+
 
 
 	timepoint now;
@@ -368,7 +640,7 @@ int UI()
 			+ frame_order[frame_index % MAX_FRAMES] * frame_elements;
 
 		// PLM frame window
-		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
+		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, pSamplerState, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
 
 		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
 
@@ -618,7 +890,7 @@ unsigned int QuantisePhase(double phaseVal) {
 }
 
 bool BitpackHolograms(
-	double* phase,
+	float* phase,
 	unsigned char* hologram,
 	unsigned long long N,
 	unsigned long long M,
@@ -664,6 +936,84 @@ bool BitpackHolograms(
 	return true;
 };
 
+bool BitpackHologramsGPU(
+	float* phase,
+	unsigned char* hologram,
+	unsigned long long N,
+	unsigned long long M,
+	int num_holograms
+)
+{
+	if (num_holograms > 24) return false;
+
+	// Check all resources are initialized
+	if (!g_pd3dDevice || !g_pd3dDeviceContext || !g_pComputeShader ||
+		!g_pConstantBuffer || !g_pPhaseBuffer || !g_pPhaseSRV ||
+		!pHologramTexture || !g_pHologramUAV || !pStagingTexture) {
+		std::cout << "Resource not initialized" << std::endl;
+		return false;
+	};
+
+	// Update constant buffer (optional for this test, but keeping for completeness)
+	c_Params constant = {};
+	constant.N = (uint32_t)N;
+	constant.M = (uint32_t)M;
+	constant.num_holograms = (uint32_t)num_holograms;
+	g_pd3dDeviceContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &constant, 0, 0);
+
+	D3D11_BOX box;
+	// Update phase buffer with current data 
+	box = { 0, 0, 0, (UINT)(sizeof(float) * N * M * num_holograms), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pPhaseBuffer, 0, &box, phase, 0, 0);
+
+	// Update LUT buffer with current data 
+	box = { 0, 0, 0, (UINT)(sizeof(float) * 17), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, phases, 0, 0);
+
+	// Update PhaseMap buffer with current data
+	box = { 0, 0, 0, (UINT)(sizeof(int) * 64), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pPhaseMapBuffer, 0, &box, phase_map, 0, 0);
+
+	g_pd3dDeviceContext->CSSetShader(g_pComputeShader, nullptr, 0);
+	g_pd3dDeviceContext->CSSetConstantBuffers(0, 1, &g_pConstantBuffer);
+	g_pd3dDeviceContext->CSSetShaderResources(0, 1, &g_pPhaseSRV);
+	g_pd3dDeviceContext->CSSetShaderResources(1, 1, &g_pLUTSRV);
+	g_pd3dDeviceContext->CSSetShaderResources(2, 1, &g_pPhaseMapSRV);
+	g_pd3dDeviceContext->CSSetUnorderedAccessViews(0, 1, &g_pHologramUAV, nullptr);
+
+	g_pd3dDeviceContext->Dispatch(ceil(2.0 * N / 32.0), ceil(2.0 * M / 32.0), 1);
+
+	// Copy result to staging buffer
+	g_pd3dDeviceContext->CopyResource(pStagingTexture, pHologramTexture);
+
+	// Map staging buffer and copy to CPU
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	HRESULT hr = g_pd3dDeviceContext->Map(pStagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
+	if (FAILED(hr)) {
+		std::cerr << "Failed to map staging buffer: 0x" << std::hex << hr << std::dec << std::endl;
+		return false;
+	}
+
+	// Log the first few values to verify the clear color
+	UINT* data = (UINT*)mapped.pData;
+	for (int i = 0; i < 10 && i < (2 * N) * (2 * M); ++i) {
+		UINT pixel = data[i];
+		uint8_t R = (pixel >> 0) & 0xFF;   // Bits 0–7: Red
+		uint8_t G = (pixel >> 8) & 0xFF;   // Bits 8–15: Green
+		uint8_t B = (pixel >> 16) & 0xFF;  // Bits 16–23: Blue
+		uint8_t A = (pixel >> 24) & 0xFF;  // Bits 24–31: Alpha
+		std::cout << "Pixel " << i << ": R=" << (int)R
+			<< ", G=" << (int)G
+			<< ", B=" << (int)B
+			<< ", A=" << (int)A << std::endl;
+	}
+
+	// Copy to hologram array
+	memcpy(hologram, mapped.pData, 4 * (2 * N) * (2 * M));
+	g_pd3dDeviceContext->Unmap(pStagingTexture, 0);
+
+	return true;
+}
 
 // Helper functions
 bool CreateDeviceD3D(HWND hWnd)
@@ -682,22 +1032,36 @@ bool CreateDeviceD3D(HWND hWnd)
 	sd.OutputWindow = hWnd;
 	sd.SampleDesc.Count = 1;
 	sd.SampleDesc.Quality = 0;
-	sd.Windowed = FALSE;
+	sd.Windowed = TRUE;
 	sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
 	UINT createDeviceFlags = 0;
 	//createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 	D3D_FEATURE_LEVEL featureLevel;
-	const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
-	HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
+	const D3D_FEATURE_LEVEL featureLevelArray[1] = { D3D_FEATURE_LEVEL_11_1 };
+	HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 1, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
 
-	printf("D3D11CreateDeviceAndSwapChain: x%8x\n", res);
+	printf("D3D11CreateDeviceAndSwapChain: 0x%8x\n", res);
 	if (res == DXGI_ERROR_UNSUPPORTED) // Try high-performance WARP software driver if hardware is not available.
 		res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
 	if (res != S_OK)
 		return false;
 
+	std::cout << "Feature Level: " << std::hex << featureLevel << std::dec << std::endl;
 	CreateRenderTarget();
+
+    if (!CompileComputeShader(g_pd3dDevice))
+    {
+        std::cerr << "Failed to compile bitpack compute shader" << std::endl;
+        return false;
+    }
+
+    if (!InitBitpackResources())
+    {
+        std::cerr << "Failed to initialize bitpack resources" << std::endl;
+        return false;
+    }
+
 	return true;
 }
 void CleanupDeviceD3D()
@@ -706,6 +1070,14 @@ void CleanupDeviceD3D()
 	if (g_pSwapChain) { g_pSwapChain->Release(); g_pSwapChain = nullptr; }
 	if (g_pd3dDeviceContext) { g_pd3dDeviceContext->Release(); g_pd3dDeviceContext = nullptr; }
 	if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = nullptr; }
+	//// Compute shader cleanup
+	if (g_pComputeShader) { g_pComputeShader->Release(); g_pComputeShader = nullptr; }
+	if (pStagingTexture) { pStagingTexture->Release(); pStagingTexture = nullptr; }
+	if (g_pHologramUAV) { g_pHologramUAV->Release(); g_pHologramUAV = nullptr; }
+	if (pHologramTexture) { pHologramTexture->Release(); pHologramTexture = nullptr; }
+	if (g_pPhaseSRV) { g_pPhaseSRV->Release(); g_pPhaseSRV = nullptr; }
+	if (g_pPhaseBuffer) { g_pPhaseBuffer->Release(); g_pPhaseBuffer = nullptr; }
+	if (g_pConstantBuffer) { g_pConstantBuffer->Release(); g_pConstantBuffer = nullptr; }
 }
 void CreateRenderTarget()
 {
@@ -761,6 +1133,7 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
+bool bitpackDebugInit = false;
 void DebugWindow(
 	bool show,
 	ImGuiIO& io
@@ -838,6 +1211,75 @@ void DebugWindow(
 		frame_index = clamp(frame_index_i32, 0, MAX_FRAMES - 1);
 	};
 
+	static std::vector<float> phase(N * M * 24);
+	static std::vector<unsigned char> hologram(4 * 2 * N * 2 * M);
+
+	if (bitpackDebugInit == false) {
+		for (auto n = 0; n < 24; n++) {
+			for (auto j = 0; j < M; j++) {
+				for (auto i = 0; i < N; i++) {
+					phase[i + j * N + n * N * M] = (float) i / (float) N;
+				}
+			};
+		};
+		bitpackDebugInit = true;
+	};	
+
+		if (ImGui::Button("Debug Bitpack")) {
+			using clock = std::chrono::high_resolution_clock;
+
+			// Time BitpackHolograms
+			auto start = clock::now();
+			auto result1 = BitpackHolograms(phase.data(), hologram.data(), N, M, 24);
+			auto end = clock::now();
+			auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+			std::cout << "BitpackHolograms: " << result1 << " (time: "
+				<< duration1 << " microseconds)" << std::endl;
+
+			// Time InsertPLMFrame
+			start = clock::now();
+			auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
+			end = clock::now();
+			auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+			std::cout << "InsertPLMFrame: " << result2 << " (time: "
+				<< duration2 << " microseconds)" << std::endl;
+
+			// Time SetPLMFrame
+			start = clock::now();
+			auto result3 = SetPLMFrame(0);
+			end = clock::now();
+			auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+			std::cout << "SetPLMFrame: " << result3 << " (time: "
+				<< duration3 << " microseconds)" << std::endl;
+		}
+
+	if (ImGui::Button("Debug Bitpack GPU")) {
+		using clock = std::chrono::high_resolution_clock;
+
+		// Time BitpackHologramsGPU
+		auto start = clock::now();
+		auto result1 = BitpackHologramsGPU(phase.data(), hologram.data(), N, M, 24);
+		auto end = clock::now();
+		auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		std::cout << "BitpackHologramsGPU: " << result1 << " (time: "
+			<< duration1 << " microseconds)" << std::endl;
+
+		// Time InsertPLMFrame
+		start = clock::now();
+		auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
+		end = clock::now();
+		auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		std::cout << "InsertPLMFrame: " << result2 << " (time: "
+			<< duration2 << " microseconds)" << std::endl;
+
+		// Time SetPLMFrame
+		start = clock::now();
+		auto result3 = SetPLMFrame(0);
+		end = clock::now();
+		auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		std::cout << "SetPLMFrame: " << result3 << " (time: "
+			<< duration3 << " microseconds)" << std::endl;
+	}
 
 	ImGui::SeparatorText("LUT");
 	ImGui::PlotLines("LUT", phases, 17);
@@ -865,6 +1307,9 @@ void DebugWindow(
 int main() {
 
 	StartUI(MAX_FRAMES);
+
+
+
 	return 0;
 }
 #endif
