@@ -111,7 +111,7 @@ uint8_t* plm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex plm_image_mutex;
 //int N = 600, M = 600, monitor_id = 0;
-int N = 800, M = 800, monitor_id = 0;
+int N = 1300, M = 800, monitor_id = 0;
 
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
@@ -981,35 +981,33 @@ bool BitpackHologramsGPU(
 	g_pd3dDeviceContext->CSSetShaderResources(2, 1, &g_pPhaseMapSRV);
 	g_pd3dDeviceContext->CSSetUnorderedAccessViews(0, 1, &g_pHologramUAV, nullptr);
 
-	g_pd3dDeviceContext->Dispatch(ceil(2.0 * N / 32.0), ceil(2.0 * M / 32.0), 1);
+	g_pd3dDeviceContext->Dispatch(ceil(2.0 * N / 16.0), ceil(2.0 * M / 16.0), 1);
 
-	// Copy result to staging buffer
+	// Copy result to staging texture
 	g_pd3dDeviceContext->CopyResource(pStagingTexture, pHologramTexture);
 
-	// Map staging buffer and copy to CPU
+	// Map staging texture and copy to CPU
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	HRESULT hr = g_pd3dDeviceContext->Map(pStagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
 	if (FAILED(hr)) {
-		std::cerr << "Failed to map staging buffer: 0x" << std::hex << hr << std::dec << std::endl;
+		std::cerr << "Failed to map staging texture: 0x" << std::hex << hr << std::dec << std::endl;
 		return false;
 	}
 
-	// Log the first few values to verify the clear color
-	UINT* data = (UINT*)mapped.pData;
-	for (int i = 0; i < 10 && i < (2 * N) * (2 * M); ++i) {
-		UINT pixel = data[i];
-		uint8_t R = (pixel >> 0) & 0xFF;   // Bits 0–7: Red
-		uint8_t G = (pixel >> 8) & 0xFF;   // Bits 8–15: Green
-		uint8_t B = (pixel >> 16) & 0xFF;  // Bits 16–23: Blue
-		uint8_t A = (pixel >> 24) & 0xFF;  // Bits 24–31: Alpha
-		std::cout << "Pixel " << i << ": R=" << (int)R
-			<< ", G=" << (int)G
-			<< ", B=" << (int)B
-			<< ", A=" << (int)A << std::endl;
+	// Copy to hologram array, accounting for RowPitch
+	uint8_t* dest = static_cast<uint8_t*>(hologram);         // Destination buffer
+	uint8_t* src = static_cast<uint8_t*>(mapped.pData);      // Source: mapped texture data
+	uint32_t widthBytes = 2 * N * 4;                         // Width of one row in bytes (2*N pixels, 4 bytes each)
+	uint32_t height = 2 * M;                                 // Number of rows
+
+	for (uint32_t row = 0; row < height; ++row) {
+		// Copy each row, respecting the pitch of the mapped resource
+		memcpy(dest + row * widthBytes,                      // Destination offset
+			src + row * mapped.RowPitch,                  // Source offset with pitch
+			widthBytes);                                  // Bytes per row (no padding in dest)
 	}
 
-	// Copy to hologram array
-	memcpy(hologram, mapped.pData, 4 * (2 * N) * (2 * M));
+	InsertPLMFrame(hologram, 1, 0, 1);
 	g_pd3dDeviceContext->Unmap(pStagingTexture, 0);
 
 	return true;
@@ -1225,33 +1223,33 @@ void DebugWindow(
 		bitpackDebugInit = true;
 	};	
 
-		if (ImGui::Button("Debug Bitpack")) {
-			using clock = std::chrono::high_resolution_clock;
+	if (ImGui::Button("Debug Bitpack")) {
+		using clock = std::chrono::high_resolution_clock;
 
-			// Time BitpackHolograms
-			auto start = clock::now();
-			auto result1 = BitpackHolograms(phase.data(), hologram.data(), N, M, 24);
-			auto end = clock::now();
-			auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-			std::cout << "BitpackHolograms: " << result1 << " (time: "
-				<< duration1 << " microseconds)" << std::endl;
+		// Time BitpackHolograms
+		auto start = clock::now();
+		auto result1 = BitpackHolograms(phase.data(), hologram.data(), N, M, 24);
+		auto end = clock::now();
+		auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		std::cout << "BitpackHolograms: " << result1 << " (time: "
+			<< duration1 << " microseconds)" << std::endl;
 
-			// Time InsertPLMFrame
-			start = clock::now();
-			auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
-			end = clock::now();
-			auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-			std::cout << "InsertPLMFrame: " << result2 << " (time: "
-				<< duration2 << " microseconds)" << std::endl;
+		// Time InsertPLMFrame
+		start = clock::now();
+		auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
+		end = clock::now();
+		auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		std::cout << "InsertPLMFrame: " << result2 << " (time: "
+			<< duration2 << " microseconds)" << std::endl;
 
-			// Time SetPLMFrame
-			start = clock::now();
-			auto result3 = SetPLMFrame(0);
-			end = clock::now();
-			auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-			std::cout << "SetPLMFrame: " << result3 << " (time: "
-				<< duration3 << " microseconds)" << std::endl;
-		}
+		// Time SetPLMFrame
+		start = clock::now();
+		auto result3 = SetPLMFrame(0);
+		end = clock::now();
+		auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		std::cout << "SetPLMFrame: " << result3 << " (time: "
+			<< duration3 << " microseconds)" << std::endl;
+	}
 
 	if (ImGui::Button("Debug Bitpack GPU")) {
 		using clock = std::chrono::high_resolution_clock;

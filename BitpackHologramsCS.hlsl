@@ -26,7 +26,7 @@ uint QuantisePhase(float phaseVal)
     return 0; // Default if outside range
 }
 
-[numthreads(32, 32, 1)]
+[numthreads(16, 16, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {
     uint2 pos = DTid.xy;
@@ -67,8 +67,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
         color[color_id] |= (bit << offset);
     };
 
-    //uint2 uv = { 255 * p / (2 * M), 255 * q / (2 * N) };
-    //uint R = phase[i + j * N + n * N * M] * 255;
+    //uint2 uv = { p / (2 * M), q / (2 * N) };
+    //uint R = 255 * frac(10.0 * p / (2 * M));
     //uint G = 0 ;
     //uint B = 0 ;
     //const uint A = 255;
