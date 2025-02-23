@@ -28,6 +28,13 @@ extern "C" {
 		unsigned long long N,
 		unsigned long long M,
 		int num_holograms);
+	PLM_API bool BitpackAndInsertGPU(
+		float* phase,
+		unsigned long long N,
+		unsigned long long M,
+		int num_holograms,
+		unsigned long long offset
+	);
 	PLM_API void SetLookupTable(double*);
 	PLM_API bool SetFrameSequence(unsigned long long*, unsigned long long length);
 	PLM_API bool SetPLMFrame(unsigned long long offset);

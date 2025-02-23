@@ -28,7 +28,7 @@
 
 
 // To be defined if compiled as an executable
-#define PLM_DEBUG
+//#define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -53,9 +53,6 @@
 #include "plmctrl.h"
 
 #include "helpers.h"
-
-typedef struct { unsigned x, y, z, w; } uint4;
-
 
 // DirectX Stuff
 static ID3D11Device* g_pd3dDevice = nullptr;
@@ -93,24 +90,14 @@ struct c_Params {
 	uint32_t pad;
 };
 
-// 80 bytes
-struct c_LUT {
-	float phases[17];
-	float pad[3];
-};
-
-// 256 bytes
-struct c_PhaseMap {
-	int phase_map[64];
-};
-
 
 bool running = false;
 bool isSetupDone = false;
 uint8_t* plm_image_ptr = nullptr;
+
 std::mutex mutex;
 std::mutex plm_image_mutex;
-//int N = 600, M = 600, monitor_id = 0;
+
 int N = 1300, M = 800, monitor_id = 0;
 
 int window_x0 = 0, window_y0 = 0;
@@ -123,15 +110,17 @@ enum PLM_MODE {
 };
 
 PLM_MODE plm_mode = PLM_IDLE;
+
 bool plm_connected = false;
-int frames_to_play = 0;
-int frames_in_sequence = -1;
 bool first_frame_trigger = false;
 bool start_playing_trigger = false;
 bool plm_is_displaying = false;
 bool sequence_active = false;
 bool displaying_active = false;
 bool continuous_mode = false;
+
+int frames_to_play = 0;
+int frames_in_sequence = -1;
 int64_t frame_index = 0;
 int64_t buffer_index = -1;
 long long t0 = 0;
@@ -146,6 +135,7 @@ std::chrono::duration<double> elapsed_buffer;
 std::chrono::duration<double> elapsed_total;
 
 uint64_t MAX_FRAMES = 64;
+std::vector<uint8_t> frame;
 std::vector<uint8_t> frame_set;
 std::vector<uint64_t> frame_order;
 
@@ -243,8 +233,6 @@ bool InitBitpackResources()
 	HRESULT hr;
 	D3D11_BUFFER_DESC bufDesc = {};
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-
-
 
 	// Constant buffer for shader parameters
 	bufDesc = {};
@@ -410,6 +398,7 @@ bool StartSequence(int number_of_frames) {
 bool StartDisplaying() {
 	// Start displaying continuously on the PLM
 	// Tailored for real-time applications.
+	// IN CONSTRUCTION
 
 	displaying_active = true;
 	first_frame_trigger = true;
@@ -418,14 +407,13 @@ bool StartDisplaying() {
 }
 
 bool Resynchronise(unsigned long long offset) {
+	// IN CONSTRUCTION
 	return true;
 }
 
 // Main code
 int UI()
 {
-
-
 
 	//if (!GetSecondMonitorRect(monitorRect, monitor_id)) {
 	//	std::cerr << "Second monitor not found!" << std::endl;
@@ -438,19 +426,17 @@ int UI()
 	monitorRect.left = 0;
 	monitorRect.top = 0;
 
-	HWND hwnd = ::CreateWindowExW(
-		WS_EX_WINDOWEDGE,               // Extended style: Gives a raised edge
-		wc.lpszClassName,               // Class name: "plmctrl"
-		L"plmctrl",                     // Window title
-		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,  // Window style: Standard window with title bar
-		1920-400,                     // X position
-		0,                              // Y position
-		400,                            // Width
-		400,                            // Height
-		nullptr,                        // Parent window (none)
-		nullptr,                        // Menu (none)
-		wc.hInstance,                   // Instance handle
-		nullptr                         // Additional data (none)
+	HWND hwnd = ::CreateWindowEx(
+		WS_EX_TOPMOST, // dwExStyle: No extended styles
+		wc.lpszClassName,
+		L"plmctrl",
+		WS_POPUP | WS_VISIBLE,
+		1920 - 400, 0,
+		2716, 1600,
+		nullptr,
+		nullptr,
+		wc.hInstance,
+		nullptr
 	);
 
 	// Initialize Direct3D
@@ -735,6 +721,7 @@ void StartUI(unsigned int number_of_frames) {
 	running = true;
 	plm_image_ptr = nullptr;
 
+	frame.resize(4 * (2 * N) * (2 * M));
 	frame_set.resize(4 * (2 * N) * (2 * M) * MAX_FRAMES);
 	std::fill(frame_set.begin(), frame_set.end(), 255);
 
@@ -1007,9 +994,23 @@ bool BitpackHologramsGPU(
 			widthBytes);                                  // Bytes per row (no padding in dest)
 	}
 
-	InsertPLMFrame(hologram, 1, 0, 1);
 	g_pd3dDeviceContext->Unmap(pStagingTexture, 0);
 
+	return true;
+}
+
+bool BitpackAndInsertGPU(
+	float* phase,
+	unsigned long long N,
+	unsigned long long M,
+	int num_holograms,
+	unsigned long long offset	
+) {
+	if (!BitpackHologramsGPU(phase, frame.data(), N, M, num_holograms)) {
+		std::cerr << "Failed to bitpack holograms" << std::endl;
+		return false;
+	};
+	InsertPLMFrame(frame.data(), num_holograms, offset, 1);
 	return true;
 }
 
