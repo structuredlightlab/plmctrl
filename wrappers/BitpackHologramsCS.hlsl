@@ -67,12 +67,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
         color[color_id] |= (bit << offset);
     };
 
-    //uint2 uv = { p / (2 * M), q / (2 * N) };
-    //uint R = 255 * frac(10.0 * p / (2 * M));
-    //uint G = 0 ;
-    //uint B = 0 ;
-    //const uint A = 255;
-    //hologram[pos] = R | G << 8 | B << 16 | A << 24;
     hologram[pos] = color.r | color.g << 8 | color.b << 16 | color.a << 24;
 
 }
