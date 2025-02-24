@@ -28,7 +28,7 @@
 
 
 // To be defined if compiled as an executable
-//#define PLM_DEBUG
+// #define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -135,7 +135,7 @@ std::chrono::duration<double> elapsed_buffer;
 std::chrono::duration<double> elapsed_total;
 
 uint64_t MAX_FRAMES = 64;
-std::vector<uint8_t> frame;
+std::vector<unsigned char> frame;
 std::vector<uint8_t> frame_set;
 std::vector<uint64_t> frame_order;
 
@@ -1010,7 +1010,10 @@ bool BitpackAndInsertGPU(
 		std::cerr << "Failed to bitpack holograms" << std::endl;
 		return false;
 	};
-	InsertPLMFrame(frame.data(), num_holograms, offset, 1);
+
+	InsertPLMFrame((unsigned char*) frame.data(), 1, offset, 1);
+	SetPLMFrame(offset);
+
 	return true;
 }
 
@@ -1257,19 +1260,11 @@ void DebugWindow(
 
 		// Time BitpackHologramsGPU
 		auto start = clock::now();
-		auto result1 = BitpackHologramsGPU(phase.data(), hologram.data(), N, M, 24);
+		auto result1 = BitpackAndInsertGPU(phase.data(),N, M, 24, 0);
 		auto end = clock::now();
 		auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 		std::cout << "BitpackHologramsGPU: " << result1 << " (time: "
 			<< duration1 << " microseconds)" << std::endl;
-
-		// Time InsertPLMFrame
-		start = clock::now();
-		auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
-		end = clock::now();
-		auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		std::cout << "InsertPLMFrame: " << result2 << " (time: "
-			<< duration2 << " microseconds)" << std::endl;
 
 		// Time SetPLMFrame
 		start = clock::now();

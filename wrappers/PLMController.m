@@ -35,6 +35,7 @@ function plm = PLMController(MAX_FRAMES, width, height)
     plm.SetPhaseMap = @SetPhaseMap;          % Set the phase map for holograms
     plm.BitpackHolograms = @BitpackHolograms;  % Create and bit-pack holograms from phase data
     plm.BitpackHologramsGPU = @BitpackHologramsGPU;
+    plm.BitpackAndInsertGPU = @BitpackAndInsertGPU;
     plm.Cleanup = @cleanup;                  % Unload the library and cleanup resources
 
     % Function to setup the PLM window on a specified monitor
@@ -118,6 +119,21 @@ function plm = PLMController(MAX_FRAMES, width, height)
         
         % Retrieve the bit-packed hologram
         frame = hologramPtr.Value;
+    end
+
+    % Function to create and bit-pack holograms from phase data
+    function res = BitpackAndInsertGPU(phase, offset)
+        validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
+        validateattributes(offset, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
+
+        % Initialize an empty array to hold the bit-packed hologram
+        numPatterns = size(phase, 3);
+        
+        % Prepare pointers to the phase data and the hologram array
+        phasePtr = libpointer('singlePtr', phase);
+        
+        % Bit-pack the holograms using the library function
+        calllib('plmctrl', 'BitpackAndInsertGPU', phasePtr, plm.N, plm.M, numPatterns, offset);
     end
 
     % Function to cleanup and unload the PLM library

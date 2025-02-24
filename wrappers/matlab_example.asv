@@ -7,8 +7,8 @@ MAX_FRAMES = 64;
 
 % Set monitor size
 % PLM is N = 1358 by M = 800
-N = 100;
-M = 100;
+N = 1358;
+M = 800;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
@@ -97,13 +97,6 @@ for j = 1:1
         beta = 2*(rand() - 0.5);
         phase(:,:,i) = mod(wedge(alpha, beta), 2*pi)/(2*pi);
     end
-    tic
-    frame = plm.BitpackHologramsGPU(phase);
-    toc
-%     tic
-%     frame = plm.BitpackHolograms(phase);
-%     toc
-%     frame_set(:,:,j) = frame;
 end
 
 % Uploads a bunch of frames to the PLM memory starting at index 0 (=offset)
@@ -115,6 +108,48 @@ sequence = (0:MAX_FRAMES-1);
 plm.SetFrameSequence(sequence);
 
 plm.SetFrame(0); % First frame
+
+%%
+
+[x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
+wedge = @(alpha, beta) alpha*x + beta*y;
+
+
+% Generate multiple holograms
+numHolograms = 24;
+phase = zeros(N, M, numHolograms, 'single');
+frame_set = zeros(4*2*N, 2*M, MAX_FRAMES, 'uint8');
+
+for j = 1:1
+    fprintf("MATLAB: Generating bitpacked hologram #%d\n",j);
+    for i = 1:numHolograms
+        alpha = 2*(rand() - 0.5);
+        beta = 2*(rand() - 0.5);
+        phase(:,:,i) = mod(wedge(alpha, beta), 2*pi)/(2*pi);
+    end
+end
+
+% Uploads a bunch of frames to the PLM memory starting at index 0 (=offset)
+offset = 0;
+format = 1; % RGBA
+
+%%
+
+tic
+frame = plm.BitpackHologramsGPU(phase);
+toc
+tic
+plm.InsertFrames(frame, offset, format);
+toc
+tic
+plm.SetFrame(offset);
+toc
+
+%%
+
+tic
+plm.BitpackAndInsertGPU(phase, offset);
+toc
 
 %%
 sequence = (0:MAX_FRAMES-1);
