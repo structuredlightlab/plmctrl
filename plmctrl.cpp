@@ -98,7 +98,7 @@ uint8_t* plm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex plm_image_mutex;
 
-int N = 1300, M = 800, monitor_id = 0;
+int N = 1358, M = 800, monitor_id = 0;
 
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
@@ -431,7 +431,7 @@ int UI()
 		wc.lpszClassName,
 		L"plmctrl",
 		WS_POPUP | WS_VISIBLE,
-		1920 - 400, 0,
+		1920, 0,
 		2716, 1600,
 		nullptr,
 		nullptr,
@@ -763,7 +763,7 @@ void SetPLMWindowPos(int width, int height, int monitor) {
 	monitor_id = monitor;
 }
 
-void SetLookupTable(double* phase) {
+void SetLookupTable(float* phase) {
 	for (int i = 0; i < 17; i++) {
 		phases[i] = phase[i];
 	}
@@ -1031,7 +1031,7 @@ bool CreateDeviceD3D(HWND hWnd)
 	sd.OutputWindow = hWnd;
 	sd.SampleDesc.Count = 1;
 	sd.SampleDesc.Quality = 0;
-	sd.Windowed = TRUE;
+	sd.Windowed = FALSE;
 	sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
 	UINT createDeviceFlags = 0;

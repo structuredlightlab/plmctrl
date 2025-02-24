@@ -35,7 +35,7 @@ extern "C" {
 		int num_holograms,
 		unsigned long long offset
 	);
-	PLM_API void SetLookupTable(double*);
+	PLM_API void SetLookupTable(float*);
 	PLM_API bool SetFrameSequence(unsigned long long*, unsigned long long length);
 	PLM_API bool SetPLMFrame(unsigned long long offset);
 	PLM_API bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames, unsigned long long offset, int type);
