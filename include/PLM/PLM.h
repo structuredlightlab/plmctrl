@@ -91,6 +91,7 @@ namespace PLM {
 		ID3D11Texture2D* pTexture = NULL;
 		data_texture_view->GetResource((ID3D11Resource**)&pTexture);
 		g_pd3dDeviceContext->Map(pTexture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource);
+
 		//g_pd3dDeviceContext->PSSetSamplers(0, 1, &pSamplerState);
 		//start = std::chrono::high_resolution_clock::now();
 

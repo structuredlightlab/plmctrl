@@ -98,7 +98,7 @@ uint8_t* plm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex plm_image_mutex;
 
-int N = 1358, M = 800, monitor_id = 0;
+int N = 1920/2, M = 1080/2, monitor_id = 0;
 
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
@@ -135,12 +135,14 @@ std::chrono::duration<double> elapsed_buffer;
 std::chrono::duration<double> elapsed_total;
 
 uint64_t MAX_FRAMES = 64;
+bool windowed = false;
 std::vector<unsigned char> frame;
 std::vector<uint8_t> frame_set;
 std::vector<uint64_t> frame_order;
 
 // TI's default lookup-table
 float phases[17] = { 0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1.0 };
+
 // Binary counting phase-map, has to be calibrated.
 int phase_map[] = {
 	0, 0, 0, 0,
@@ -432,7 +434,7 @@ int UI()
 		L"plmctrl",
 		WS_POPUP | WS_VISIBLE,
 		1920, 0,
-		2716, 1600,
+		2*N, 2*M,
 		nullptr,
 		nullptr,
 		wc.hInstance,
@@ -757,6 +759,10 @@ void StopUI() {
 	return;
 }
 
+void SetWindowed(bool windowed_mode) {
+	windowed = windowed_mode;
+};
+
 void SetPLMWindowPos(int width, int height, int monitor) {
 	N = width;
 	M = height;
@@ -864,7 +870,7 @@ bool GrabPLMFrame(unsigned char* hologram, uint64_t index = 0) {
 	return true;
 };
 
-unsigned int QuantisePhase(double phaseVal) {
+unsigned int QuantisePhase(float phaseVal) {
 	for (int level_num = 0; level_num < 17; level_num++) {
 		if ((phaseVal > phases[level_num]) && (phaseVal < phases[level_num + 1])) {
 			if (fabs(phaseVal - phases[level_num]) < fabs(phaseVal - phases[level_num + 1])) {
@@ -989,7 +995,7 @@ bool BitpackHologramsGPU(
 
 	for (uint32_t row = 0; row < height; ++row) {
 		// Copy each row, respecting the pitch of the mapped resource
-		memcpy(dest + row * widthBytes,                      // Destination offset
+		memcpy(dest + row * widthBytes,                   // Destination offset
 			src + row * mapped.RowPitch,                  // Source offset with pitch
 			widthBytes);                                  // Bytes per row (no padding in dest)
 	}
@@ -1034,8 +1040,8 @@ bool CreateDeviceD3D(HWND hWnd)
 	sd.OutputWindow = hWnd;
 	sd.SampleDesc.Count = 1;
 	sd.SampleDesc.Quality = 0;
-	sd.Windowed = FALSE;
-	sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+	sd.Windowed = windowed;
+	sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
 	UINT createDeviceFlags = 0;
 	//createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
@@ -1045,7 +1051,7 @@ bool CreateDeviceD3D(HWND hWnd)
 
 	printf("D3D11CreateDeviceAndSwapChain: 0x%8x\n", res);
 	if (res == DXGI_ERROR_UNSUPPORTED) // Try high-performance WARP software driver if hardware is not available.
-		res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
+		res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 1, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
 	if (res != S_OK)
 		return false;
 
@@ -1301,8 +1307,6 @@ void DebugWindow(
 int main() {
 
 	StartUI(MAX_FRAMES);
-
-
 
 	return 0;
 }
