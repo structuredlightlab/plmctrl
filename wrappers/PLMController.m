@@ -130,8 +130,8 @@ function plm = PLMController(MAX_FRAMES, width, height)
 
     % Function to create and bit-pack holograms from phase data
     function res = BitpackAndInsertGPU(phase, offset)
-        validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
-        validateattributes(offset, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
+%         validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
+%         validateattributes(offset, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
 
         % Initialize an empty array to hold the bit-packed hologram
         numPatterns = size(phase, 3);

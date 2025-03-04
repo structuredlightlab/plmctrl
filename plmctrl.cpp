@@ -875,7 +875,7 @@ bool GrabPLMFrame(unsigned char* hologram, uint64_t index = 0) {
 
 unsigned int QuantisePhase(float phaseVal) {
 	for (int level_num = 0; level_num < 17; level_num++) {
-		if ((phaseVal > phases[level_num]) && (phaseVal < phases[level_num + 1])) {
+		if ((phaseVal >= phases[level_num]) && (phaseVal < phases[level_num + 1])) {
 			if (fabs(phaseVal - phases[level_num]) < fabs(phaseVal - phases[level_num + 1])) {
 				return level_num;
 			};

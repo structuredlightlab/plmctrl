@@ -16,7 +16,7 @@ uint QuantisePhase(float phaseVal)
 {
     for (uint level = 0; level < 16; level++)
     {
-        if (phaseVal > phases[level] && phaseVal < phases[level + 1])
+        if (phaseVal >= phases[level] && phaseVal < phases[level + 1])
         {
             float diff1 = phaseVal - phases[level];
             float diff2 = phases[level + 1] - phaseVal;
