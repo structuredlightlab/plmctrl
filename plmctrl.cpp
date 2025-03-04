@@ -248,9 +248,10 @@ bool InitBitpackResources()
 	const int max_num_holograms = 24;
 	bufDesc = {};
 	bufDesc.ByteWidth = sizeof(float) * N * M * max_num_holograms;
-	bufDesc.Usage = D3D11_USAGE_DEFAULT;
-	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	bufDesc.Usage = D3D11_USAGE_DYNAMIC;  
+	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE; 
+	bufDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE; 
+	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED; 
 	bufDesc.StructureByteStride = sizeof(float);
 	hr = g_pd3dDevice->CreateBuffer(&bufDesc, nullptr, &g_pPhaseBuffer);
 	if (FAILED(hr)) {
@@ -272,6 +273,7 @@ bool InitBitpackResources()
 		g_pConstantBuffer = nullptr;
 		return false;
 	}
+
 
 	//////////////
 	bufDesc = {};
@@ -331,6 +333,7 @@ bool InitBitpackResources()
 		g_pConstantBuffer = nullptr;
 		return false;
 	}
+
 
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 	uavDesc.Format = DXGI_FORMAT_R32_UINT;
@@ -769,9 +772,9 @@ void SetPLMWindowPos(int width, int height, int monitor) {
 	monitor_id = monitor;
 }
 
-void SetLookupTable(float* phase) {
+void SetLookupTable(float* lut) {
 	for (int i = 0; i < 17; i++) {
-		phases[i] = phase[i];
+		phases[i] = lut[i];
 	}
 }
 
@@ -947,7 +950,7 @@ bool BitpackHologramsGPU(
 		return false;
 	};
 
-	// Update constant buffer (optional for this test, but keeping for completeness)
+	// Update constant buffer 
 	c_Params constant = {};
 	constant.N = (uint32_t)N;
 	constant.M = (uint32_t)M;
@@ -955,17 +958,23 @@ bool BitpackHologramsGPU(
 	g_pd3dDeviceContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &constant, 0, 0);
 
 	D3D11_BOX box;
-	// Update phase buffer with current data 
-	box = { 0, 0, 0, (UINT)(sizeof(float) * N * M * num_holograms), 1, 1 };
-	g_pd3dDeviceContext->UpdateSubresource(g_pPhaseBuffer, 0, &box, phase, 0, 0);
-
 	// Update LUT buffer with current data 
 	box = { 0, 0, 0, (UINT)(sizeof(float) * 17), 1, 1 };
 	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, phases, 0, 0);
 
+	ZeroMemory(&box, sizeof(box));
 	// Update PhaseMap buffer with current data
 	box = { 0, 0, 0, (UINT)(sizeof(int) * 64), 1, 1 };
 	g_pd3dDeviceContext->UpdateSubresource(g_pPhaseMapBuffer, 0, &box, phase_map, 0, 0);
+
+	D3D11_MAPPED_SUBRESOURCE mappedResource;
+	HRESULT hr_ = g_pd3dDeviceContext->Map(g_pPhaseBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
+	if (SUCCEEDED(hr_)) {
+		BYTE* pDest = reinterpret_cast<BYTE*>(mappedResource.pData);
+		size_t bufferSize = N * M * num_holograms * sizeof(float);  // Total size in bytes
+		memcpy(pDest, phase, bufferSize);
+		g_pd3dDeviceContext->Unmap(g_pPhaseBuffer, 0);
+	};
 
 	g_pd3dDeviceContext->CSSetShader(g_pComputeShader, nullptr, 0);
 	g_pd3dDeviceContext->CSSetConstantBuffers(0, 1, &g_pConstantBuffer);
@@ -982,6 +991,7 @@ bool BitpackHologramsGPU(
 	// Map staging texture and copy to CPU
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	HRESULT hr = g_pd3dDeviceContext->Map(pStagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
+
 	if (FAILED(hr)) {
 		std::cerr << "Failed to map staging texture: 0x" << std::hex << hr << std::dec << std::endl;
 		return false;
@@ -1058,16 +1068,14 @@ bool CreateDeviceD3D(HWND hWnd)
 	std::cout << "Feature Level: " << std::hex << featureLevel << std::dec << std::endl;
 	CreateRenderTarget();
 
-    if (!CompileComputeShader(g_pd3dDevice))
-    {
+    if (!CompileComputeShader(g_pd3dDevice)){
         std::cerr << "Failed to compile bitpack compute shader" << std::endl;
-        return false;
+        //return false;
     }
 
-    if (!InitBitpackResources())
-    {
+    if (!InitBitpackResources()){
         std::cerr << "Failed to initialize bitpack resources" << std::endl;
-        return false;
+        //return false;
     }
 
 	return true;
@@ -1266,20 +1274,38 @@ void DebugWindow(
 
 		// Time BitpackHologramsGPU
 		auto start = clock::now();
-		auto result1 = BitpackAndInsertGPU(phase.data(),N, M, 24, 0);
+		auto result1 = BitpackAndInsertGPU(phase.data(), N, M, 24, 0);
 		auto end = clock::now();
 		auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 		std::cout << "BitpackHologramsGPU: " << result1 << " (time: "
 			<< duration1 << " microseconds)" << std::endl;
 
-		// Time SetPLMFrame
-		start = clock::now();
-		auto result3 = SetPLMFrame(0);
-		end = clock::now();
-		auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		std::cout << "SetPLMFrame: " << result3 << " (time: "
-			<< duration3 << " microseconds)" << std::endl;
-	}
+		//// Time InsertPLMFrame
+		//start = clock::now();
+		//auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
+		//end = clock::now();
+		//auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		//std::cout << "InsertPLMFrame: " << result2 << " (time: "
+		//	<< duration2 << " microseconds)" << std::endl;
+
+		//// Time SetPLMFrame
+		//start = clock::now();
+		//auto result3 = SetPLMFrame(0);
+		//end = clock::now();
+		//auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		//std::cout << "SetPLMFrame: " << result3 << " (time: "
+		//	<< duration3 << " microseconds)" << std::endl;
+	};
+
+	ImGui::SeparatorText("GPU Resources Initialization");
+	ImGui::Text("Compute Shader"); ImGui::SameLine(); BitGreen(g_pComputeShader != nullptr, false);
+	ImGui::Text("Constant Buffer:"); ImGui::SameLine(); BitGreen(g_pConstantBuffer != nullptr, false);
+	ImGui::Text("Phase Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseBuffer != nullptr, false);
+	ImGui::Text("LUT Buffer:"); ImGui::SameLine(); BitGreen(g_pLUTBuffer != nullptr, false);
+	ImGui::Text("Phase Map Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseMapBuffer != nullptr, false);
+	ImGui::Text("Hologram Texture:"); ImGui::SameLine(); BitGreen(pHologramTexture != nullptr, false);
+	ImGui::Text("Hologram UAV:"); ImGui::SameLine(); BitGreen(g_pHologramUAV != nullptr, false);
+	ImGui::Text("Staging Texture:"); ImGui::SameLine(); BitGreen(pStagingTexture != nullptr, false);
 
 	ImGui::SeparatorText("LUT");
 	ImGui::PlotLines("LUT", phases, 17);

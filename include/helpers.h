@@ -71,3 +71,15 @@ void Bit(bool indicator, bool same_line = false) {
 	ImGui::Text(" ");
 	if (same_line) ImGui::SameLine();
 }
+
+void BitGreen(bool indicator, bool same_line = false) {
+	ImU32 green = IM_COL32(0, 255, 0, 255);
+	ImU32 red = IM_COL32(255, 0, 0, 255);
+	ImU32 blue = IM_COL32(0, 0, 255, 255);
+	ImU32 grey = IM_COL32(120, 120, 120, 255);
+	ImU32 yellow = IM_COL32(255, 255, 0, 255);
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + 2), ImVec2(pos.x + 10, pos.y + 12), indicator ? green : grey);
+	ImGui::Text(" ");
+	if (same_line) ImGui::SameLine();
+}
