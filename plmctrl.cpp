@@ -28,7 +28,7 @@
 
 
 // To be defined if compiled as an executable
-// #define PLM_DEBUG
+//#define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -98,7 +98,7 @@ uint8_t* plm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex plm_image_mutex;
 
-int N = 1920/2, M = 1080/2, monitor_id = 0;
+int N = 200, M = 200, monitor_id = 0;
 
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
@@ -139,6 +139,8 @@ bool windowed = false;
 std::vector<unsigned char> frame;
 std::vector<uint8_t> frame_set;
 std::vector<uint64_t> frame_order;
+
+std::mutex dx_mutex;
 
 // TI's default lookup-table
 float phases[17] = { 0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1.0 };
@@ -356,10 +358,13 @@ bool InitBitpackResources()
 
 	// Staging buffer to copy output to CPU
 	D3D11_TEXTURE2D_DESC stagingDesc = texDesc;
+	//stagingDesc.Width = 4*2*N;  
+	//stagingDesc.Height = 2*M; 
 	stagingDesc.Usage = D3D11_USAGE_STAGING;
 	stagingDesc.BindFlags = 0;
 	stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 	hr = g_pd3dDevice->CreateTexture2D(&stagingDesc, nullptr, &pStagingTexture);
+
 	if (FAILED(hr)) {
 		g_pHologramUAV->Release();
 		g_pHologramUAV = nullptr;
@@ -468,7 +473,7 @@ int UI()
 	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewport / Platform Windows
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
+	//io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
 	io.ConfigDockingWithShift = true; // Enable docking with shift key
 	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)  std::cout << "[plmctrl]: Viewports enabled" << std::endl;
 
@@ -534,6 +539,8 @@ int UI()
 	// Main UI loop. Changes the frames with VSync enabled
 	while (running && !done)
 	{
+
+		std::lock_guard<std::mutex> lock(dx_mutex); // Lock mutex
 
 		if (frames_to_play < 0 && sequence_active) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(delay));
@@ -932,7 +939,7 @@ bool BitpackHolograms(
 	return true;
 };
 
-bool BitpackHologramsGPU(
+unsigned long BitpackHologramsGPU(
 	float* phase,
 	unsigned char* hologram,
 	unsigned long long N,
@@ -940,14 +947,22 @@ bool BitpackHologramsGPU(
 	int num_holograms
 )
 {
-	if (num_holograms > 24) return false;
+	//// Wait for gpu to be free
+	std::lock_guard<std::mutex> lock(dx_mutex); // Lock mutex
+
+	if (num_holograms > 24) return -1;
+
+	if (!phase || !hologram) {
+		std::cout << "Null pointer detected" << std::endl;
+		return -2;
+	};
 
 	// Check all resources are initialized
 	if (!g_pd3dDevice || !g_pd3dDeviceContext || !g_pComputeShader ||
 		!g_pConstantBuffer || !g_pPhaseBuffer || !g_pPhaseSRV ||
-		!pHologramTexture || !g_pHologramUAV || !pStagingTexture) {
+		!pHologramTexture || !g_pHologramUAV || !pStagingTexture || !g_pLUTBuffer || !g_pPhaseMapBuffer || !g_pLUTSRV) {
 		std::cout << "Resource not initialized" << std::endl;
-		return false;
+		return 1;
 	};
 
 	// Update constant buffer 
@@ -974,6 +989,8 @@ bool BitpackHologramsGPU(
 		size_t bufferSize = N * M * num_holograms * sizeof(float);  // Total size in bytes
 		memcpy(pDest, phase, bufferSize);
 		g_pd3dDeviceContext->Unmap(g_pPhaseBuffer, 0);
+	} else {
+		return 2;
 	};
 
 	g_pd3dDeviceContext->CSSetShader(g_pComputeShader, nullptr, 0);
@@ -988,13 +1005,17 @@ bool BitpackHologramsGPU(
 	// Copy result to staging texture
 	g_pd3dDeviceContext->CopyResource(pStagingTexture, pHologramTexture);
 
+	if (pStagingTexture == nullptr) {
+		std::cerr << "Failed to copy hologram to staging texture" << std::endl;
+		return 4;
+	};
 	// Map staging texture and copy to CPU
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	HRESULT hr = g_pd3dDeviceContext->Map(pStagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
 
 	if (FAILED(hr)) {
-		std::cerr << "Failed to map staging texture: 0x" << std::hex << hr << std::dec << std::endl;
-		return false;
+		//std::cerr << "Failed to map staging texture: 0x" << std::hex << hr << std::dec << std::endl;
+		return hr;
 	}
 
 	// Copy to hologram array, accounting for RowPitch
@@ -1012,7 +1033,7 @@ bool BitpackHologramsGPU(
 
 	g_pd3dDeviceContext->Unmap(pStagingTexture, 0);
 
-	return true;
+	return 0;
 }
 
 bool BitpackAndInsertGPU(

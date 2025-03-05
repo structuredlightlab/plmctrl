@@ -7,12 +7,12 @@ MAX_FRAMES = 64;
 
 % Set monitor size
 % PLM is N = 1358 by M = 800
-% N = 1920/2; M = 1080/2;
-N = 1920/2; M = 1080/2;
+N = 1358; M = 800;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
 % %%
+%%
 plm.SetWindowedMode(true);
 monitorId = 1; % This parameter is not currently working.
 plm.StartUI(monitorId);
@@ -54,16 +54,15 @@ plm.SetPhaseMap(phase_map);
 
 phaseTest = zeros(N, M, 24,'single');
 phaseTest(1:N/4,1:M/4, :) = 0;
-phaseTest(N/4 + 1: end, 1:M/4, :) = 0.4;
-phaseTest(1:N/4, M/4+1:end, :) = 0.2;
-phaseTest(N/4+1:end, M/4+1:end, :) = 0.6;
+phaseTest(N/4 + 1: end, 1:M/4, :) = 0.4*rand();
+phaseTest(1:N/4, M/4+1:end, :) = 0.2*rand();
+phaseTest(N/4+1:end, M/4+1:end, :) = 0.6*rand();
 
 % for i = 1:30
 tic
-frame = plm.BitpackHolograms(phaseTest);
-% frame = plm.BitpackHologramsGPU(phaseTest);
+% frame = plm.BitpackHolograms(phaseTest);
+frame = plm.BitpackHologramsGPU(phaseTest);
 toc
-% end
 
 % negligible time
 offset = 0;
