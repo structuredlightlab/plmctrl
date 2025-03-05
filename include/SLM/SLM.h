@@ -88,13 +88,19 @@ namespace SLM {
 		uint8_t* src = static_cast<uint8_t*>(data);
 
 		for (UINT row = 0; row < M; ++row) {
-			// Copy each row, taking into account the pitch
-			memcpy(dest + row * mapped_resource.RowPitch,
-				src + row * N * sizeof(uint8_t),
-				N * sizeof(uint8_t));
+			uint8_t* dest_row = dest + row * mapped_resource.RowPitch; // Start of current row in texture
+			uint8_t* src_row = src + row * N * sizeof(uint8_t);       // Start of current row in source
+			for (UINT col = 0; col < N; ++col) {
+				uint8_t val = src_row[col]; // Single-channel value
+				dest_row[col * 4 + 0] = val; // R
+				dest_row[col * 4 + 1] = val; // G
+				dest_row[col * 4 + 2] = val; // B
+				dest_row[col * 4 + 3] = 255; // A
+			}
 		}
 
 		g_pd3dDeviceContext->Unmap(pTexture, 0);
+
 		pTexture->Release();
 
 		//end = std::chrono::high_resolution_clock::now();

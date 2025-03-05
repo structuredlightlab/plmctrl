@@ -1,4 +1,4 @@
-function slm = SLMController(MAX_HOLOGRAMS, width, height)
+function slm = SLMController(MAX_HOLOGRAMS, width, height, windowed)
     % SLMController: Initializes and manages a controller for SLM hardware.
     %
     % This function creates a structure `slm` with various fields and methods
@@ -18,8 +18,9 @@ function slm = SLMController(MAX_HOLOGRAMS, width, height)
     slm.MAX_HOLOGRAMS = MAX_HOLOGRAMS;
     slm.N = width;
     slm.M = height;
+    slm.Windowed = windowed;
     
-    % Load the 'slmctrl' library if it is not already loaded
+    % Load the 'slmctrl_1' library if it is not already loaded
     if ~libisloaded('slmctrl')
         [~, ~] = loadlibrary('slmctrl', 'slmctrl.h');
     end
@@ -41,9 +42,9 @@ function slm = SLMController(MAX_HOLOGRAMS, width, height)
     slm.Cleanup = @cleanup;
 
     function StartUI(monitor_id)
-        validateattributes(monitor_id, {'numeric'}, {'scalar', 'positive', 'integer'});
+        validateattributes(monitor_id, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
         
-        calllib('slmctrl', 'SetSLMWindowPos', slm.N, slm.M, monitor_id);
+        calllib('slmctrl', 'SetSLMWindowPos', slm.N, slm.M, monitor_id, slm.Windowed);
         calllib('slmctrl', 'StartUI', slm.MAX_HOLOGRAMS);
     end
 

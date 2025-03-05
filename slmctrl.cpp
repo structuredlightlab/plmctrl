@@ -12,7 +12,7 @@
 
 
  // To be defined if compiled as an executable
-// #define SLM_DEBUG
+//#define SLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -56,9 +56,10 @@ bool isSetupDone = false;
 uint8_t* slm_image_ptr = nullptr;
 std::mutex mutex;
 std::mutex slm_image_mutex;
-int N = 1920 / 4, M = 1080 / 4, monitor_id = 0;
+int N = 1920 / 4, M = 1080 / 4;
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
+int monitor_id = 0;
 
 enum SLM_MODE {
 	SLM_IDLE = 0,
@@ -77,6 +78,7 @@ bool sequence_active = false;
 bool continuous_mode = false;
 int64_t hologram_index = 0;
 int64_t buffer_index = -1;
+bool windowed = true;
 long long t0 = 0;
 
 bool camera_trigger = false;
@@ -211,12 +213,11 @@ int UI()
 	timepoint end;
 
 
-	// Hologram texture (holds the bitpacked holograms)
 	desc.Width = N;
 	desc.Height = M;
 	desc.MipLevels = 1;
 	desc.ArraySize = 1;
-	desc.Format = DXGI_FORMAT_R8_UNORM;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	desc.SampleDesc.Count = 1;
 	desc.Usage = D3D11_USAGE_DYNAMIC;
 	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -451,10 +452,11 @@ void StopUI() {
 	return;
 }
 
-void SetSLMWindowPos(int width, int height, int monitor) {
+void SetSLMWindowPos(int width, int height, int monitor, bool windowed) {
 	N = width;
 	M = height;
 	monitor_id = monitor;
+	windowed = windowed;
 }
 
 void SetLookupTable(double* phase) {
@@ -478,7 +480,6 @@ bool SetHologramSequence(unsigned long long* sequence, unsigned long long length
 
 bool InsertSLMHologram(unsigned char* hologram, unsigned long long num_holograms = 1, unsigned long long offset = 0) {
 
-
 	if (offset + num_holograms > MAX_HOLOGRAMS) {
 		// Exceeds the maximum number of holograms we can store
 		return false;
@@ -490,10 +491,10 @@ bool InsertSLMHologram(unsigned char* hologram, unsigned long long num_holograms
 	uint64_t total_elements = num_holograms * hologram_elements;
 	int k = 0;
 
-	hologram_set.insert(
-		hologram_set.begin() + offset * hologram_elements,
+	std::copy(
 		hologram,
-		hologram + total_elements
+		hologram + total_elements,
+		hologram_set.begin() + offset * hologram_elements
 	);
 
 	std::cout << num_holograms << " holograms inserted" << std::endl;
@@ -510,9 +511,9 @@ bool SetSLMHologram(unsigned long long offset = 0) {
 
 	hologram_index = offset;
 
-	for (int i = 0; i < MAX_HOLOGRAMS; i++) {
-		hologram_order[i] = offset;
-	};
+	//for (int i = 0; i < MAX_HOLOGRAMS; i++) {
+	//	hologram_order[i] = offset;
+	//};
 
 	return true;
 };
@@ -596,8 +597,8 @@ bool CreateDeviceD3D(HWND hWnd)
 	sd.OutputWindow = hWnd;
 	sd.SampleDesc.Count = 1;
 	sd.SampleDesc.Quality = 0;
-	sd.Windowed = FALSE;
-	sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+	sd.Windowed = windowed;
+	sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
 	UINT createDeviceFlags = 0;
 	//createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
