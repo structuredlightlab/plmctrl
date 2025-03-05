@@ -23,7 +23,7 @@ extern "C" {
 		unsigned long long N,
 		unsigned long long M,
 		int num_holograms);
-	PLM_API unsigned long BitpackHologramsGPU(
+	PLM_API bool BitpackHologramsGPU(
 		float* phase,
 		unsigned char* frame,
 		unsigned long long N,

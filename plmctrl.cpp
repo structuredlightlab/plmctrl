@@ -939,7 +939,7 @@ bool BitpackHolograms(
 	return true;
 };
 
-unsigned long BitpackHologramsGPU(
+bool BitpackHologramsGPU(
 	float* phase,
 	unsigned char* hologram,
 	unsigned long long N,
@@ -950,11 +950,11 @@ unsigned long BitpackHologramsGPU(
 	//// Wait for gpu to be free
 	std::lock_guard<std::mutex> lock(dx_mutex); // Lock mutex
 
-	if (num_holograms > 24) return -1;
+	if (num_holograms > 24) return false;
 
 	if (!phase || !hologram) {
 		std::cout << "Null pointer detected" << std::endl;
-		return -2;
+		return false;
 	};
 
 	// Check all resources are initialized
@@ -962,7 +962,7 @@ unsigned long BitpackHologramsGPU(
 		!g_pConstantBuffer || !g_pPhaseBuffer || !g_pPhaseSRV ||
 		!pHologramTexture || !g_pHologramUAV || !pStagingTexture || !g_pLUTBuffer || !g_pPhaseMapBuffer || !g_pLUTSRV) {
 		std::cout << "Resource not initialized" << std::endl;
-		return 1;
+		return false;
 	};
 
 	// Update constant buffer 
@@ -990,7 +990,7 @@ unsigned long BitpackHologramsGPU(
 		memcpy(pDest, phase, bufferSize);
 		g_pd3dDeviceContext->Unmap(g_pPhaseBuffer, 0);
 	} else {
-		return 2;
+		return false;
 	};
 
 	g_pd3dDeviceContext->CSSetShader(g_pComputeShader, nullptr, 0);
@@ -1007,7 +1007,7 @@ unsigned long BitpackHologramsGPU(
 
 	if (pStagingTexture == nullptr) {
 		std::cerr << "Failed to copy hologram to staging texture" << std::endl;
-		return 4;
+		return false;
 	};
 	// Map staging texture and copy to CPU
 	D3D11_MAPPED_SUBRESOURCE mapped;
@@ -1015,7 +1015,7 @@ unsigned long BitpackHologramsGPU(
 
 	if (FAILED(hr)) {
 		//std::cerr << "Failed to map staging texture: 0x" << std::hex << hr << std::dec << std::endl;
-		return hr;
+		return false;
 	}
 
 	// Copy to hologram array, accounting for RowPitch
@@ -1033,7 +1033,7 @@ unsigned long BitpackHologramsGPU(
 
 	g_pd3dDeviceContext->Unmap(pStagingTexture, 0);
 
-	return 0;
+	return true;
 }
 
 bool BitpackAndInsertGPU(
