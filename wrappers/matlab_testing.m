@@ -11,8 +11,7 @@ N = 1358; M = 800;
 
 plm = PLMController(MAX_FRAMES, N, M);
 
-% %%
-%%
+
 plm.SetWindowedMode(true);
 monitorId = 1; % This parameter is not currently working.
 plm.StartUI(monitorId);

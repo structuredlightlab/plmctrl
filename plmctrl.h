@@ -13,6 +13,8 @@ extern "C" {
 #endif
 	PLM_API void StartUI(unsigned int number_of_frames);
 	PLM_API void StopUI();
+	PLM_API bool PauseUI();
+	PLM_API bool ResumeUI();
 	PLM_API bool StartSequence(int number_of_frames);
 	PLM_API bool SetPhaseMap(int* new_phase_map);
 	PLM_API void SetPLMWindowPos(int width, int height, int monitor);

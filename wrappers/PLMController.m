@@ -30,6 +30,8 @@ function plm = PLMController(MAX_FRAMES, width, height)
     plm.SetFrameSequence = @SetFrameSequence; % Set the sequence of frames for display
     plm.StartSequence = @StartSequence;      % Start displaying the sequence of frames
     plm.StopUI = @StopUI;                    % Stop the PLM UI
+    plm.PauseUI = @PauseUI;                    % Pause the PLM UI
+    plm.ResumeUI = @ResumeUI;                    % Resume the PLM UI
     plm.SetLookupTable = @SetLookupTable;    % Set the lookup table for phase levels
     plm.SetFrame = @SetFrame;                % Set a specific frame to display
     plm.SetPhaseMap = @SetPhaseMap;          % Set the phase map for holograms
@@ -73,6 +75,14 @@ function plm = PLMController(MAX_FRAMES, width, height)
 
     function StopUI()
         calllib('plmctrl', 'StopUI');
+    end
+
+    function PauseUI()
+        calllib('plmctrl', 'PauseUI');
+    end
+
+    function ResumeUI()
+        calllib('plmctrl', 'ResumeUI');
     end
 
     % Function to set the lookup table for phase levels

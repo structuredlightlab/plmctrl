@@ -118,6 +118,10 @@ bool plm_is_displaying = false;
 bool sequence_active = false;
 bool displaying_active = false;
 bool continuous_mode = false;
+std::atomic<bool> pause_UI = false;
+std::atomic<bool> bitpacking_in_progress = false;
+std::atomic<bool> UI_is_rendering = false;
+
 
 int frames_to_play = 0;
 int frames_in_sequence = -1;
@@ -421,9 +425,18 @@ bool Resynchronise(unsigned long long offset) {
 	return true;
 }
 
+bool PauseUI() {
+	pause_UI = true;
+	return true;
+};
+
+bool ResumeUI() {
+	pause_UI = false;
+	return true;
+};
+
 // Main code
-int UI()
-{
+int UI(){
 
 	//if (!GetSecondMonitorRect(monitorRect, monitor_id)) {
 	//	std::cerr << "Second monitor not found!" << std::endl;
@@ -539,8 +552,14 @@ int UI()
 	// Main UI loop. Changes the frames with VSync enabled
 	while (running && !done)
 	{
+		UI_is_rendering.store(false);
 
-		std::lock_guard<std::mutex> lock(dx_mutex); // Lock mutex
+		if (bitpacking_in_progress.load() || pause_UI.load()) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			continue;
+		};
+
+		UI_is_rendering.store(true);
 
 		if (frames_to_play < 0 && sequence_active) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(delay));
@@ -581,8 +600,7 @@ int UI()
 			break;
 
 		// Handle window being minimized or screen locked
-		if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED)
-		{
+		if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED){
 			::Sleep(10);
 			continue;
 		}
@@ -656,9 +674,11 @@ int UI()
 		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
 			ImGui::UpdatePlatformWindows();
 			ImGui::RenderPlatformWindowsDefault();
-		}
+		};
 
 		int display_w, display_h;
+
+
 
 		// Present with VSync. This is the most important part for correct frame-pace
 		HRESULT hr = g_pSwapChain->Present(1, 0);
@@ -694,6 +714,8 @@ int UI()
 			frame_index = clamp(frame_index, 0, MAX_FRAMES - 1);
 			frames_to_play--;
 		};
+
+		UI_is_rendering.store(false);
 
 	};
 
@@ -947,9 +969,15 @@ bool BitpackHologramsGPU(
 	int num_holograms
 )
 {
-	//// Wait for gpu to be free
-	std::lock_guard<std::mutex> lock(dx_mutex); // Lock mutex
+	// Pause the UI main loop
+	bitpacking_in_progress.store(true);
 
+	//Check if UI_is_rendering is true
+	while (UI_is_rendering.load()) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	};
+
+	// Check if the number of holograms is within the limit
 	if (num_holograms > 24) return false;
 
 	if (!phase || !hologram) {
@@ -1032,6 +1060,8 @@ bool BitpackHologramsGPU(
 	}
 
 	g_pd3dDeviceContext->Unmap(pStagingTexture, 0);
+
+	bitpacking_in_progress.store(false);
 
 	return true;
 }
