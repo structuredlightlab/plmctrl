@@ -42,6 +42,9 @@
 /include/PLM/common.h
 /include/PLM/usb*
 
+/__pycache__/
+*.asv
+
 *.ini
 
 /bin/*.exp
