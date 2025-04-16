@@ -202,6 +202,8 @@
     <ClCompile Include="include\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="include\imgui\imgui_tables.cpp" />
     <ClCompile Include="include\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="include\PLM\API.c" />
+    <ClCompile Include="include\PLM\usb.c" />
     <ClCompile Include="plmctrl.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
     </ClCompile>

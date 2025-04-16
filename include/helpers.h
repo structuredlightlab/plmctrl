@@ -12,7 +12,7 @@ struct MonitorData {
 //////////////////// DirectX helpers ////////////////////
 
 // Function to find the second monitor
-bool GetSecondMonitorRect(RECT& rect)
+bool GetSecondMonitorRect(RECT& rect, int monitor_id)
 {
 	MonitorData data = { 0, {0, 0, 0, 0} };
 	bool foundSecondMonitor = false;
@@ -24,7 +24,7 @@ bool GetSecondMonitorRect(RECT& rect)
 			monitorInfo.cbSize = sizeof(MONITORINFO);
 			if (GetMonitorInfo(hMonitor, &monitorInfo))
 			{
-				if (monitorData->monitorIndex == 1)  // We're looking for the second monitor (index 1)
+				if (monitorData->monitorIndex == 2)  // We're looking for the second monitor (index 1)
 				{
 					monitorData->monitorRect = monitorInfo.rcMonitor;
 					return FALSE;  // Stop enumeration after finding the second monitor
@@ -34,7 +34,7 @@ bool GetSecondMonitorRect(RECT& rect)
 			return TRUE;  // Continue enumeration
 		}, reinterpret_cast<LPARAM>(&data));
 
-	if (data.monitorIndex == 1)  // Ensure that the second monitor was found
+	if (data.monitorIndex == 2)  // Ensure that the second monitor was found
 	{
 		rect = data.monitorRect;
 		foundSecondMonitor = true;
@@ -68,6 +68,18 @@ void Bit(bool indicator, bool same_line = false) {
 	ImU32 yellow = IM_COL32(255, 255, 0, 255);
 	ImVec2 pos = ImGui::GetCursorScreenPos();
 	ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + 2), ImVec2(pos.x + 10, pos.y + 12), indicator ? yellow : grey);
+	ImGui::Text(" ");
+	if (same_line) ImGui::SameLine();
+}
+
+void BitGreen(bool indicator, bool same_line = false) {
+	ImU32 green = IM_COL32(0, 255, 0, 255);
+	ImU32 red = IM_COL32(255, 0, 0, 255);
+	ImU32 blue = IM_COL32(0, 0, 255, 255);
+	ImU32 grey = IM_COL32(120, 120, 120, 255);
+	ImU32 yellow = IM_COL32(255, 255, 0, 255);
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + 2), ImVec2(pos.x + 10, pos.y + 12), indicator ? green : grey);
 	ImGui::Text(" ");
 	if (same_line) ImGui::SameLine();
 }

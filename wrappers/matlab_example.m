@@ -1,63 +1,38 @@
+% Written by J. C. A. Rocha
+% Date: 16/Apr/2025
+% Queries: jd964@exeter.ac.uk
+
 clearvars;
 
 addpath('../');
 addpath('../bin/')
 
-%%
-MAX_FRAMES = 12;
+MAX_FRAMES = 16;
 
 % Set monitor size
 % PLM is N = 1358 by M = 800
-N = 1920/2;
-M = 1080/2;
+N = 1358;
+M = 800;
 
-plm = PLMController(MAX_FRAMES, N, M);
+% This is the offset to the PLM virtual monitor. (0, 0) is the top left corner of your main screen. 
+% The example below ( x0 = 1920, y0 = 0 ) is for the PLM monitor to be on the right of the main 1080p screen.
+x0 = 1920;
+y0 = 0;
+
+plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 
 
-%% Start the UI
 monitorId = 1; % This parameter is not currently working.
-plm.StartUI(monitorId);
+plm.SetWindowedMode(true); % Only for debug purposes -- Suggested if you're testing how this library works.
 
+plm.StartUI(monitorId);
+% 
 %% Modify the Look-Up Table (LUT)
 % By default, it is set to TI's LUT (Texas Instruments)
-phase_levels = [0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1];
-% phase_levels = linspace(0,1,17); % linear LUT
+% phase_levels = single([0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1]);
+phase_levels = single([0.004, 0.017, 0.036, 0.058, 0.085, 0.117, 0.157, 0.217, 0.296, 0.4, 0.5, 0.605, 0.713, 0.82, 0.922, 0.981, 1]);
+% phase_levels = single(linspace(0,1,17)); % linear LUT
 plm.SetLookupTable(phase_levels);
-
-%% Simple test: Inserts a random hologram into the sequence
-% Create a random frame (bitpacked holograms)
-frame =  randi(255,3*2*N, 2*M, 'uint8');
-
-offset = 0;
-format = 0; % 0 = RGB, 1 = RGBA
-plm.InsertFrames(frame, offset, format)
-plm.SetFrame(0);
-
-%% Inserts a set of frames into the sequence
-% Create a random frame (bitpacked holograms)
-num_frames = 10;
-frames =  randi(255,4*2*N, 2*M, num_frames, 'uint8');
-% Set the hologram to be displayed
-offset = 0;
-format = 1; % 0 = RGB, 1 = RGBA
-plm.InsertFrames(frames, offset, format)
-
-%% Sets the frame sequence to be displayed
-% Each frame contains 24 bitpacked PLM holograms
-% sequence = (0:47);
-% sequence = repmat([0,1,2,3,],[1,6]);
-% % sequence = repmat([0,1],[1,12]);
-% sequence = repmat([0,1,2,3],[1,6]);
-sequence = 0:(MAX_FRAMES-1);
-plm.SetFrameSequence(sequence);
-
-%% Start Sequence
-frames_to_display = 4;
-plm.StartSequence(frames_to_display);
-
-%% Sets the order to display single frame
-frame = 0;
-plm.SetFrame(frame);
 
 %% Set phase_map
 % Define phase map
@@ -79,17 +54,67 @@ phase_map = [
     0 1 1 1;
     1 1 1 1;
 ];
-phase_map = phase_map(randperm(16),:);
-plm.SetPhaseMap(phase_map);
 
-%% More involved test: Create multiple holograms
+% phase_map = phase_map(randperm(16),:);
+order = [14, 1, 10, 6, 2, 15, 11, 7, 3, 16, 12, 8, 4, 13, 9, 5];
+phase_map = phase_map(order,:);
+
+plm.SetPhaseMap(phase_map);
+%% Simple test: Inserts a random hologram into the sequence
+
+phaseTest = zeros(N, M, 24,'single');
+phaseTest(1:N/4,1:M/4, :) = 0;
+phaseTest(N/4 + 1: end, 1:M/4, :) = 0.4*rand();
+phaseTest(1:N/4, M/4+1:end, :) = 0.2*rand();
+phaseTest(N/4+1:end, M/4+1:end, :) = 0.6*rand();
+
+frame = plm.BitpackHologramsGPU(phaseTest);
+offset = 0;
+format = 1;
+plm.InsertFrames(frame, offset, format);
+plm.SetFrame(offset);
+
+
+%% Generate multiple holograms and send them to plmctrl (Fastest way)
+% Here we use pointers to avoid unnecessary allocations. 
+
 [x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
 wedge = @(alpha, beta) alpha*x + beta*y;
 
-
-% Generate multiple holograms
 numHolograms = 24;
-phase = zeros(N, M, numHolograms);
+phase = zeros(N, M, numHolograms, 'single');
+frame_set = zeros(4*2*N, 2*M, MAX_FRAMES, 'uint8');
+frame = zeros(4*2*N, 2*M, 'uint8');
+
+for j = 1:MAX_FRAMES
+    fprintf("MATLAB: Generating bitpacked hologram #%d\n",j);
+    for i = 1:numHolograms
+        alpha = 2*(rand() - 0.5);
+        beta = 2*(rand() - 0.5);
+        phase(:,:,i) = mod(wedge(alpha, beta), 1);
+    end
+    
+    phasePtr = libpointer('singlePtr', phase);
+    framePtr = libpointer('uint8Ptr', frame);
+    plm.BitpackHologramsGPUPtr(phasePtr, framePtr, numHolograms);
+    frame_set(:,:,j) = framePtr.Value;
+
+end
+
+% Uploads a bunch of frames to the PLM memory starting at index 0 (=offset)
+offset = 0;
+format = 1; % 1 = RGBA, 0 = RGB
+
+plm.InsertFrames(frame_set, offset, format);
+plm.SetFrame(offset);
+
+
+%% Generate multiple holograms and send them to plmctrl (Slow way)
+[x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
+wedge = @(alpha, beta) alpha*x + beta*y;
+
+numHolograms = 24;
+phase = zeros(N, M, numHolograms, 'single');
 frame_set = zeros(4*2*N, 2*M, MAX_FRAMES, 'uint8');
 
 for j = 1:MAX_FRAMES
@@ -97,31 +122,29 @@ for j = 1:MAX_FRAMES
     for i = 1:numHolograms
         alpha = 2*(rand() - 0.5);
         beta = 2*(rand() - 0.5);
-        phase(:,:,i) = mod(wedge(alpha, beta), 2*pi)/(2*pi);
+        phase(:,:,i) = mod(wedge(alpha, beta), 1);
     end
-    frame = plm.BitpackHolograms(phase);
+    frame = plm.BitpackHologramsGPU(phase);
     frame_set(:,:,j) = frame;
+
 end
 
 % Uploads a bunch of frames to the PLM memory starting at index 0 (=offset)
 offset = 0;
-format = 1; % RGBA
+format = 1; % 1 = RGBA, 0 = RGB
+
 plm.InsertFrames(frame_set, offset, format);
+plm.SetFrame(offset);
 
-sequence = (0:MAX_FRAMES-1);
-plm.SetFrameSequence(sequence);
-
-plm.SetFrame(0); % First frame
-
-%%
+%% Creating and playing a sequence
 sequence = (0:MAX_FRAMES-1);
 plm.SetFrameSequence(sequence);
 plm.StartSequence(MAX_FRAMES);
 
+
 %% PLM LUT hologram
 % By default, it is set to TI's LUT (Texas Instruments)
-phase_levels = [0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1];
-% phase_levels = linspace(0,1,17); % linear LUT
+phase_levels = single([0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1]);
 plm.SetLookupTable(phase_levels);
 
 numHolograms = 16;
@@ -130,19 +153,14 @@ for i = 1:numHolograms
     phase(1:N/2,:, i) = phase_levels(i);
 end
 
-frame = plm.BitpackHolograms(phase);
+frame = plm.BitpackHologramsGPU(phase);
 
 offset = 0;
 format = 1; % RGBA
 plm.InsertFrames(frame, offset, format);
 plm.SetFrame(0);
 
-% %% Command the PLM to start the sequencer 
-% (Not yet implemented in the wrapper)
-% plm.Play();
-% %% Command the PLM to stop the sequencer
-% (Not yet implemented in the wrapper)
-% plm.Pause();
+
 
 %% Visualize the hologram. 
 % This MATLAB figure and the second screen should match or I've done something wrong
