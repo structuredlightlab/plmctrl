@@ -28,7 +28,7 @@
 
 
 // To be defined if compiled as an executable
-//#define PLM_DEBUG
+// #define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -795,11 +795,18 @@ void SetWindowed(bool windowed_mode) {
 	windowed = windowed_mode;
 };
 
-void SetPLMWindowPos(int width, int height, int monitor) {
+void SetPLMWindowPos(int width, int height, int monitor, int x0 = 1920, int y0 = 0 ) {
 	N = width;
 	M = height;
 	monitor_id = monitor;
-}
+	window_x0 = x0;
+	window_y0 = y0;
+};
+
+//void SetPLMWindowXY(int x0, int y0) {
+//	window_x0 = x0;
+//	window_y0 = y0;
+//};
 
 void SetLookupTable(float* lut) {
 	for (int i = 0; i < 17; i++) {

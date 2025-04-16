@@ -1,4 +1,4 @@
-function plm = PLMController(MAX_FRAMES, width, height)
+function plm = PLMController(MAX_FRAMES, width, height, x0, y0)
     % PLMController: Initializes and manages a controller for PLM hardware.
     %
     % This function creates a structure `plm` with various fields and methods
@@ -10,7 +10,9 @@ function plm = PLMController(MAX_FRAMES, width, height)
     %   - MAX_FRAMES: The maximum number of frames that the PLM can handle.
     %   - width: Width of the PLM display in pixels. 
     %   - height: Height of the PLM display in pixels.
-    %     0.67" PLM is 1358 x 800 (w,h)
+    %   - x0 (int): X-coordinate of the PLM window position (default: 1920). -- Top left corner of your main monitor is ( 0, 0 ), x0 and y0 are relative to that
+    %   - y0 (int): Y-coordinate of the PLM window position (default: 0).
+    %     0.67" PLM is 1358 x 800 (width,height)
     % Outputs:
     %   - plm: A structure containing PLM control methods and properties.
 
@@ -18,6 +20,8 @@ function plm = PLMController(MAX_FRAMES, width, height)
     plm.MAX_FRAMES = MAX_FRAMES;
     plm.N = width;
     plm.M = height;
+    plm.x0 = x0;
+    plm.y0 = y0;
     
     % Load the 'plmctrl' library if it is not already loaded
     if ~libisloaded('plmctrl')
@@ -37,6 +41,7 @@ function plm = PLMController(MAX_FRAMES, width, height)
     plm.SetPhaseMap = @SetPhaseMap;          % Set the phase map for holograms
     plm.BitpackHolograms = @BitpackHolograms;  % Create and bit-pack holograms from phase data
     plm.BitpackHologramsGPU = @BitpackHologramsGPU;
+    plm.BitpackHologramsGPUPtr = @BitpackHologramsGPUPtr;
     plm.BitpackAndInsertGPU = @BitpackAndInsertGPU;
     plm.SetWindowedMode = @SetWindowed;
     plm.Cleanup = @cleanup;                  % Unload the library and cleanup resources
@@ -46,7 +51,7 @@ function plm = PLMController(MAX_FRAMES, width, height)
         % Validate that the monitor ID is a positive integer
         validateattributes(monitor_id, {'numeric'}, {'scalar', 'positive', 'integer'});
         
-        calllib('plmctrl', 'SetPLMWindowPos', plm.N, plm.M, monitor_id);
+        calllib('plmctrl', 'SetPLMWindowPos', plm.N, plm.M, monitor_id, plm.x0, plm.y0);
         calllib('plmctrl', 'StartUI', plm.MAX_FRAMES);
     end
 
@@ -136,6 +141,13 @@ function plm = PLMController(MAX_FRAMES, width, height)
         
         % Retrieve the bit-packed hologram
         frame = framePtr.Value;
+    end
+
+    % Function to create and bit-pack holograms using pointers
+    function res = BitpackHologramsGPUPtr(phasePtr, framePtr, numHolograms)
+        % Bit-pack the holograms using the library function
+        res = calllib('plmctrl', 'BitpackHologramsGPU', phasePtr, framePtr, plm.N, plm.M, numHolograms);
+        fprintf("Bitpacked: %d\n", res);
     end
 
     % Function to create and bit-pack holograms from phase data
