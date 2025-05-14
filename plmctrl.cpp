@@ -454,7 +454,7 @@ int UI(){
 		wc.lpszClassName,
 		L"plmctrl",
 		WS_POPUP | WS_VISIBLE,
-		window_x0, 0,
+		window_x0, window_y0,
 		2*N, 2*M,
 		nullptr,
 		nullptr,
