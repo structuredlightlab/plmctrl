@@ -98,6 +98,9 @@ class PLMController:
         
         if not sequence.flags['C_CONTIGUOUS']:
             sequence = np.ascontiguousarray(sequence)
+
+        if len(sequence) < self.MAX_FRAMES:
+            raise ValueError(f"sequence length must be {self.MAX_FRAMES}")
         
         sequence_ptr = sequence.astype(np.uint64).ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
         self.lib.SetFrameSequence(sequence_ptr, len(sequence))
@@ -225,8 +228,3 @@ class PLMController:
         """Cleanup and unload the PLM library."""
         self.lib.StopUI()
         # Library unloading is handled by Python at process exit
-
-# Usage example:
-# plm = PLMController(1000, 1358, 800, r'C:\dev\plmctrl\plmctrl.dll')
-# plm.start_ui(1)
-# plm.cleanup()

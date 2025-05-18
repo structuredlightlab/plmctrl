@@ -32,7 +32,7 @@
 
 
 // To be defined if compiled as an executable
-#define PLM_DEBUG
+//#define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -230,8 +230,7 @@ bool CompileComputeShader(ID3D11Device* device)
 	pBlob->Release();
 	if (FAILED(hr))
 	{
-		std::cerr << "CreateComputeShader failed with HRESULT: 0x"
-			<< std::hex << hr << std::dec << std::endl;
+		std::cerr << "CreateComputeShader failed with HRESULT: 0x" << std::hex << hr << std::dec << std::endl;
 		return false;
 	}
 
