@@ -55,11 +55,12 @@ How does the code look? In MATLAB, operation is
 MAX_FRAMES = 90; % Each contains 24 holograms
 N = 1358;
 M = 800;
+x0 = 1920; y0 = 0; (Indicates where your PLM virtual monitor is relative to your main monitor)
 % Create a PLMController instance
-plm = PLMController(MAX_FRAMES, N, M);
+plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 
 % Setup the PLM
-plm.StartUI(1);  % First monitor = 1 (adjust if needed)
+plm.StartUI(1);  % First monitor = 1 
 
 % ---- Stuff ---- 
 [x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
@@ -74,8 +75,8 @@ for i = 1:numHolograms
     phase(:,:,i) = mod(wedge(alpha, beta), 2*pi)/(2*pi);
 end
 
-% ---- Bitpacks 24 holograms into a single RGB frame ---- 
-frame = plm.BitpackHolograms(phase);
+% ---- Bitpacks 24 holograms into a single RGB frame following RGB-little endian order ---- 
+frame = plm.BitpackHologramsGPU(phase);
 
 % ---- Uploads a bitpacked hologram to the PLM ----
 offset = 0;
@@ -93,7 +94,7 @@ plm.Cleanup();
 ## External Code/Libraries/used by PLMCtrl
 * [Dear ImGui](https://github.com/ocornut/imgui) for GUI handling and wrapping graphics API
 * [hidapi](https://github.com/libusb/hidapi) for USB communication with the PLM
-* Microsoft's DirectX 11 as Graphics API
+* Microsoft's DirectX 11 as Graphics API (Meaning it runs on Windows only)
 
 ## Contact
 * PLMCtrl is developed and maintained by José C. A. Rocha and Terry Wright
