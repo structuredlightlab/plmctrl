@@ -32,7 +32,7 @@
 
 
 // To be defined if compiled as an executable
-//#define PLM_DEBUG
+#define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -51,7 +51,6 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
-
 
 #include "PLM/PLM.h"
 #include "plmctrl.h"
@@ -101,6 +100,7 @@ uint8_t* plm_image_ptr = nullptr;
 
 std::mutex mutex;
 std::mutex plm_image_mutex;
+std::mutex plm_reading_status;
 
 int N = 200, M = 200, monitor_id = 0;
 
@@ -116,6 +116,7 @@ enum PLM_MODE {
 PLM_MODE plm_mode = PLM_IDLE;
 
 bool plm_connected = false;
+bool plm_monitoring_status = false;
 bool first_frame_trigger = false;
 bool start_playing_trigger = false;
 bool plm_is_displaying = false;
@@ -125,6 +126,7 @@ bool continuous_mode = false;
 std::atomic<bool> pause_UI = false;
 std::atomic<bool> bitpacking_in_progress = false;
 std::atomic<bool> UI_is_rendering = false;
+
 
 
 int frames_to_play = 0;
@@ -174,6 +176,8 @@ int phase_map[] = {
 };
 
 std::thread ui_thread;
+std::thread plm_status_thread;
+
 
 // Forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
@@ -398,6 +402,16 @@ bool Cleanup() {
 int Play() {return PLM::Play();};
 int Stop() {return PLM::Stop();};
 
+bool PauseUI() {
+	pause_UI = true;
+	return true;
+};
+
+bool ResumeUI() {
+	pause_UI = false;
+	return true;
+};
+
 bool StartSequence(int number_of_frames) {
 
 	if (number_of_frames > MAX_FRAMES) {
@@ -428,15 +442,24 @@ bool Resynchronise(unsigned long long offset) {
 	return true;
 }
 
-bool PauseUI() {
-	pause_UI = true;
-	return true;
-};
-
-bool ResumeUI() {
-	pause_UI = false;
-	return true;
-};
+//int PLMStatusThread() {
+//
+//	while (plm_monitoring_status) {
+//
+//		if (!plm_connected) {
+//			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//			continue;
+//		};
+//
+//		plm_reading_status.lock();
+//		LCR_GetStatus(&PLM::HWStatus, &PLM::SysStatus, &PLM::MainStatus);
+//		plm_reading_status.unlock();
+//
+//		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+//	};
+//
+//	return 0;
+//}
 
 // Main code
 int UI(){
@@ -678,8 +701,6 @@ int UI(){
 		};
 
 		int display_w, display_h;
-
-
 
 		// Present with VSync. This is the most important part for correct frame-pace
 		HRESULT hr = g_pSwapChain->Present(1, 0);
@@ -1216,6 +1237,15 @@ void DebugWindow(
 	ImGuiIO& io
 ) {
 
+	static long long unsigned int ui_cycles = 0;
+	bool plm_updating_status = false;
+	
+	ui_cycles++;
+	if (ui_cycles % 60 == 0) {
+		ui_cycles = 0;
+		plm_updating_status = true;
+	}
+
 	if (!show) return;
 
 	ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
@@ -1313,64 +1343,6 @@ void DebugWindow(
 			bitpackDebugInit = true;
 		};	
 
-		//if (ImGui::Button("Debug Bitpack")) {
-		//	using clock = std::chrono::high_resolution_clock;
-
-		//	// Time BitpackHolograms
-		//	auto start = clock::now();
-		//	auto result1 = BitpackHolograms(phase.data(), hologram.data(), N, M, 24);
-		//	auto end = clock::now();
-		//	auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		//	std::cout << "BitpackHolograms: " << result1 << " (time: "
-		//		<< duration1 << " microseconds)" << std::endl;
-
-		//	// Time InsertPLMFrame
-		//	start = clock::now();
-		//	auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
-		//	end = clock::now();
-		//	auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		//	std::cout << "InsertPLMFrame: " << result2 << " (time: "
-		//		<< duration2 << " microseconds)" << std::endl;
-
-		//	// Time SetPLMFrame
-		//	start = clock::now();
-		//	auto result3 = SetPLMFrame(0);
-		//	end = clock::now();
-		//	auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		//	std::cout << "SetPLMFrame: " << result3 << " (time: "
-		//		<< duration3 << " microseconds)" << std::endl;
-		//}
-
-		//if (ImGui::Button("Debug Bitpack GPU")) {
-		//	using clock = std::chrono::high_resolution_clock;
-
-		//	//PauseUI();
-		//	// Time BitpackHologramsGPU
-		//	auto start = clock::now();
-		//	auto result1 = BitpackAndInsertGPU(phase.data(), N, M, 24, 1);
-		//	auto end = clock::now();
-		//	auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		//	std::cout << "BitpackHologramsGPU: " << result1 << " (time: "
-		//		<< duration1 << " microseconds)" << std::endl;
-		//	//ResumeUI();
-
-		//	//// Time InsertPLMFrame
-		//	//start = clock::now();
-		//	//auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
-		//	//end = clock::now();
-		//	//auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		//	//std::cout << "InsertPLMFrame: " << result2 << " (time: "
-		//	//	<< duration2 << " microseconds)" << std::endl;
-
-		//	//// Time SetPLMFrame
-		//	//start = clock::now();
-		//	//auto result3 = SetPLMFrame(0);
-		//	//end = clock::now();
-		//	//auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		//	//std::cout << "SetPLMFrame: " << result3 << " (time: "
-		//	//	<< duration3 << " microseconds)" << std::endl;
-		//};
-
 		ImGui::SeparatorText("GPU Resources Initialization");
 		ImGui::Text("Compute Shader"); ImGui::SameLine(); BitGreen(g_pComputeShader != nullptr, false);
 		ImGui::Text("Constant Buffer:"); ImGui::SameLine(); BitGreen(g_pConstantBuffer != nullptr, false);
@@ -1424,14 +1396,26 @@ void DebugWindow(
 				}
 			};
 
-			ImGui::BeginDisabled(!plm_connected);
+			ImGui::BeginDisabled(plm_connected);
 
 
 			if (ImGui::TreeNode("PLM State")) {
 
-				static unsigned char HWStatus = 0;
-				static unsigned char SysStatus = 0;
-				static unsigned char MainStatus = 0;
+				static unsigned char HWStatus = 0, SysStatus = 0, MainStatus = 0;
+				static bool plm_status_success = true;
+
+				if (plm_updating_status) {
+					// Get the status of the PLM
+					if (LCR_GetStatus(&HWStatus, &SysStatus, &MainStatus) < 0) {
+						plm_status_success = false;
+					} else {
+						plm_status_success = true;
+					}
+				};
+
+				ContinuousStatus((float)ui_cycles / 60.0, true);
+				if (plm_status_success) ImGui::Text("Monitoring PLM status"); else ImGui::Text("Unable to get PLM status");
+
 
 				// 1. Internal Memory Test Passed
 				bool memTest = SysStatus & (1 << 0);

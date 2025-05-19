@@ -46,8 +46,6 @@ typedef enum {
 	VIDEO_DP,
 } ConnectionType;
 
-
-
 // They follow this order: splashImageBitPos, Bits, exposure, dark period, color, trigIn, trigOut2, clear
 const int bitLayoutHDMI[24][8] = {
 	{ 0, 1, 1388, 0, 2, 1, 1, 0 },
@@ -81,6 +79,11 @@ namespace PLM {
 
 	char versionStr[255];
 	unsigned int API_ver, App_ver, SWConfig_ver, SeqConfig_ver;
+
+	unsigned char HWStatus = 0;
+	unsigned char SysStatus = 0;
+	unsigned char MainStatus = 0;
+
 	enum PLAYMODES {
 		PLAY_ONCE_MODE = 0,
 		REPEAT_MODE = 1,
