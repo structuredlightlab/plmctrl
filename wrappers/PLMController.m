@@ -46,6 +46,22 @@ function plm = PLMController(MAX_FRAMES, width, height, x0, y0)
     plm.SetWindowedMode = @SetWindowed;
     plm.Cleanup = @cleanup;                  % Unload the library and cleanup resources
 
+    % PLM configuring functions
+    plm.SetSource = @SetSource;
+    plm.SetPortSwap = @SetPortSwap;
+    plm.SetConnectionType = @SetConnectionType;
+    plm.SetVideoPatternMode = @SetVideoPatternMode;
+    plm.UpdateLUT = @UpdateLUT;
+    plm.Configure = @Configure;
+  
+    function out = GetVideoPatternMode()
+        out = calllib('plmctrl', 'GetVideoPatternMode');
+    end
+
+    function out = GetConnectionType()
+        out = calllib('plmctrl', 'GetConnectionType');
+    end
+
     % Function to setup the PLM window on a specified monitor
     function StartUI(monitor_id)
         % Validate that the monitor ID is a positive integer
@@ -163,6 +179,81 @@ function plm = PLMController(MAX_FRAMES, width, height, x0, y0)
         
         % Bit-pack the holograms using the library function
         res = calllib('plmctrl', 'BitpackAndInsertGPU', phasePtr, plm.N, plm.M, numPatterns, offset);
+    end
+
+function res = SetSource(source, portWidth)
+        validateattributes(source, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
+        validateattributes(portWidth, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
+        res = calllib('plmctrl', 'SetSource', uint32(source), uint32(portWidth));
+        if res == -1
+            error('SetSource failed');
+        end
+    end
+
+    function res = SetPortSwap(port, swap)
+        validateattributes(port, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
+        validateattributes(swap, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
+        res = calllib('plmctrl', 'SetPortSwap', uint32(port), uint32(swap));
+        if res == -1
+            error('SetPortSwap failed');
+        end
+    end
+
+    function res = SetConnectionType(connection_type)
+        validateattributes(connection_type, {'numeric'}, {'scalar', 'integer'});
+        fprintf("Setting connection to %d\n", connection_type);
+        res = calllib('plmctrl', 'SetConnectionType', int32(connection_type));
+        if res == -1
+            error('SetConnectionType failed');
+        end
+    end
+
+    function res = SetVideoPatternMode()
+        fprintf("Setting Video Pattern Mode\n");
+        res = calllib('plmctrl', 'SetVideoPatternMode');
+        if res == -1
+            error('SetVideoPatternMode failed');
+        end
+    end
+
+    function res = UpdateLUT(play_mode, connection_type)
+
+        validateattributes(play_mode, {'numeric'}, {'scalar', 'integer', '>=', 0, '<=', 1});
+        validateattributes(connection_type, {'numeric'}, {'scalar', 'integer', '>', 0, '<=', 2});
+
+        fprintf("Updating bit lookup-table\n");
+        res = calllib('plmctrl', 'UpdateLUT', int32(play_mode), int32(connection_type));
+        if res == -1
+            error('UpdateLUT failed');
+        end
+    end
+
+    function res = Configure(play_mode, connection_type)
+        validateattributes(play_mode, {'numeric'}, {'scalar', 'integer', '>=', 0, '<=', 1});
+        validateattributes(connection_type, {'numeric'}, {'scalar', 'integer', '>', 0, '<=', 2});
+        
+        % Set source to Parallel RGB (0) and port width to 24 bits (1)
+        SetSource(0, 1);
+        
+        % Set port swap to Port 1 (0) and ABC -> ABC (0)
+        SetPortSwap(0, 0);
+        SetPortSwap(1, 0);
+
+        if (GetConnectionType() ~= 1)
+            % Set connection type (0 to disable. 1 for HDMI, 1 for DisplayPort)
+            SetConnectionType(connection_type);
+            pause(5.5);
+        end
+        
+
+        % Set video pattern mode
+        SetVideoPatternMode();
+        pause(2.0)
+
+        % Update LUT with play mode and connection type
+        UpdateLUT(play_mode, connection_type)
+        
+        res = 0; % Success
     end
 
     % Function to cleanup and unload the PLM library

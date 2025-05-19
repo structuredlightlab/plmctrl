@@ -44,6 +44,17 @@ extern "C" {
 	PLM_API bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames, unsigned long long offset, int type);
 	PLM_API void ResetUI();
 
+	// Direct PLM comms
+
+	PLM_API int SetSource(unsigned int source, unsigned int portWidth);
+	PLM_API int SetPortSwap(unsigned int port, unsigned int swap);
+	PLM_API int SetConnectionType(int connection_type);
+	PLM_API int SetVideoPatternMode();
+	PLM_API int UpdateLUT(int play_mode, int connection_type);
+	PLM_API int GetVideoPatternMode();
+	PLM_API int GetConnectionType();
+
+
 	PLM_API int Play();
 	PLM_API int Stop();
 	PLM_API int Open();

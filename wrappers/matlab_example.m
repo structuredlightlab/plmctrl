@@ -1,5 +1,5 @@
 % Written by J. C. A. Rocha
-% Date: 16/Apr/2025
+% Date: 19/Mar/2025
 % Queries: jd964@exeter.ac.uk
 
 clearvars;
@@ -26,7 +26,16 @@ monitorId = 1; % This parameter is not currently working.
 plm.SetWindowedMode(true); % Only for debug purposes -- Suggested if you're testing how this library works.
 
 plm.StartUI(monitorId);
-% 
+
+%% Configure the PLM for HDMI. Only run it once.
+HDMI = 1;
+DisplayPort = 2;
+
+PlayOnce = 0;
+Continuous = 1;
+
+plm.Configure(Continuous, HDMI);
+
 %% Modify the Look-Up Table (LUT)
 % By default, it is set to TI's LUT (Texas Instruments)
 % phase_levels = single([0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1]);

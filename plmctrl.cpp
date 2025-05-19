@@ -32,7 +32,7 @@
 
 
 // To be defined if compiled as an executable
-#define PLM_DEBUG
+// #define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -401,6 +401,14 @@ bool Cleanup() {
 
 int Play() {return PLM::Play();};
 int Stop() {return PLM::Stop();};
+int SetSource(unsigned int source, unsigned int port_width) {return PLM::SetSource(source, port_width);};
+int SetPortSwap(unsigned int port, unsigned int swap) {return PLM::SetPortSwap(port, swap);};
+int SetConnectionType(int connection_type) {return PLM::SetConnectionType(connection_type);};
+int SetVideoPatternMode() {return PLM::SetVideoPatternMode();};
+int UpdateLUT(int play_mode, int connection_type) {return PLM::UpdateLUT(play_mode, connection_type);};
+int GetVideoPatternMode() {return PLM::GetVideoPatternMode();};
+int GetConnectionType() {return PLM::GetConnectionType();};
+
 
 bool PauseUI() {
 	pause_UI = true;
@@ -425,6 +433,11 @@ bool StartSequence(int number_of_frames) {
 
 	return true;
 }
+
+//unsigned int Configure(unsigned int play_mode, unsigned int connection_type) {
+//	return PLM::Configure(play_mode, connection_type);
+//}
+
 
 bool StartDisplaying() {
 	// Start displaying continuously on the PLM
@@ -644,7 +657,7 @@ int UI(){
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
 
-		static bool show_demo_window = true;
+		static bool show_demo_window = false;
 		if (show_demo_window)
 			ImGui::ShowDemoWindow(&show_demo_window);
 
@@ -1396,7 +1409,7 @@ void DebugWindow(
 				}
 			};
 
-			ImGui::BeginDisabled(plm_connected);
+			ImGui::BeginDisabled(!plm_connected);
 
 
 			if (ImGui::TreeNode("PLM State")) {
@@ -1483,71 +1496,51 @@ void DebugWindow(
 			//ImGui::Button("Set everything for HDMI connection");
 
 			ImGui::SeparatorText("Connection tests");
-			// Set source
-			if (ImGui::Button("Set Source")) {
-				PLM::SetSource(0, 1);
-			}; 
+
 			// Get source
 			static unsigned int source = 99, portWidth = 99;
-			if (ImGui::Button("Get Source")) {
-				if (LCR_GetInputSource(&source, &portWidth) < 0) {
-					ImGui::Text("Unable to get Input Source");
-				};
+			static bool source_problem = 0;
+			if (ImGui::Button("Check Source")) {
+				source_problem = LCR_GetInputSource(&source, &portWidth) < 0 ? true : false;
 			};
+			if (source_problem) ImGui::Text("Unable to get Input Source");
 			ImGui::SameLine();
 			Status(source == 0); ImGui::Text("Parallel RGB");
 			ImGui::SameLine();
 			Status(portWidth == 1); ImGui::Text("Port Width: %d", portWidth);
 
 			ImGui::Separator();
-			if (ImGui::Button("Set Port Swap")) {
-				PLM::SetPortSwap(0, 0);
-			};
-
 			static unsigned int port = 0, swap = 99;
-			if (ImGui::Button("Get Port Swap")) {
-				if (LCR_GetDataChannelSwap(port, &swap) < 0) {
-					ImGui::Text("Unable to get Channel Swap Info");
-				};
+			static bool swap_problem = false;
+			if (ImGui::Button("Check Port Swap")) {
+				swap_problem = LCR_GetDataChannelSwap(port, &swap) < 0 ? true : false;
 			};
+			if (swap_problem) ImGui::Text("Unable to get Channel Swap Info");
 			ImGui::SameLine();
 			ImGui::Text("Port: %d, Swap: %d", port, swap);
 			ImGui::Separator();
 
-			if (ImGui::Button("Set HDMI")) {
-				PLM::SetConnectionType(VIDEO_CON_HDMI);
-			};
+
 			static API_VideoConnector_t powerMode;
-			if (ImGui::Button("Get Conn")) {
-				if (LCR_GetIT6535PowerMode(&powerMode) < 0) {
-					ImGui::Text("Unable to get IT6535 Power Mode");
-				}
-			}; ImGui::SameLine();
+			if (ImGui::Button("Check Conn")) {
+				if (LCR_GetIT6535PowerMode(&powerMode) < 0) {};
+			}; 
+			ImGui::SameLine();
 			Status(powerMode == VIDEO_CON_DISABLE); ImGui::Text("Power down"); ImGui::SameLine();
 			Status(powerMode == VIDEO_CON_HDMI); ImGui::Text("HDMI"); ImGui::SameLine();
 			Status(powerMode == VIDEO_CON_DP); ImGui::Text("DisplayPort");
 			ImGui::Separator();
 
-			if (ImGui::Button("Set Video Pattern Mode")) {
-				PLM::SetVideoPatternMode();
-			};
+
 			static API_DisplayMode_t SLmode = PTN_MODE_DISABLE;
-			if (ImGui::Button("Get Video Mode")) {
-				if (LCR_GetMode(&SLmode) == 0){
-					if (SLmode != PTN_MODE_VIDEO){
-						ImGui::Text("Unable to get Video Mode");
-					}
-				}
+			if (ImGui::Button("Check Video Mode")) {
+				if (LCR_GetMode(&SLmode) == 0) {};
 			};
 			Status(SLmode == PTN_MODE_DISABLE); ImGui::Text("Disable Pattern Mode"); 
 			Status(SLmode == PTN_MODE_SPLASH); ImGui::Text("Pre-stored Pattern Mode"); 
 			Status(SLmode == PTN_MODE_VIDEO); ImGui::Text("Video Pattern Mode"); 
 			Status(SLmode == PTN_MODE_OTF); ImGui::Text("Pattern On-The-Fly"); 
-			ImGui::Separator();
 
-			if (ImGui::Button("Update LUT")) {
-				PLM::UpdateLUT(0);
-			};
 
 			ImGui::SeparatorText("Sequence controls");
 			Status(plm_is_displaying);
@@ -1576,7 +1569,7 @@ void DebugWindow(
 #ifdef PLM_DEBUG
 int main() {
 
-	SetPLMWindowPos(1920, 1080, 0);
+	SetPLMWindowPos(1358, 800, 1920);
 	SetWindowed(true);
 	StartUI(MAX_FRAMES);
 

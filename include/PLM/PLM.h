@@ -47,7 +47,7 @@ typedef enum {
 } ConnectionType;
 
 // They follow this order: splashImageBitPos, Bits, exposure, dark period, color, trigIn, trigOut2, clear
-const int bitLayoutHDMI[24][8] = {
+const int bit_layout_default[24][8] = {
 	{ 0, 1, 1388, 0, 2, 1, 1, 0 },
 	{ 1, 1, 1388, 0, 2, 0, 1, 0 },
 	{ 2, 1, 1388, 0, 2, 0, 1, 0 },
@@ -125,16 +125,55 @@ namespace PLM {
 		// swap: = 0 -> ABC to ABC = No Swap
 		if (LCR_SetDataChannelSwap(port, swap) < 0) {
 			std::cout << "Error: Unable to set Input Port Swap" << std::endl;
+			return -1;
 		};
 		return 0;
 	};
 
-	int SetConnectionType(API_VideoConnector_t connectionType) {
+	int SetConnectionType(int connection_type) {
+
+		API_VideoConnector_t connectionType = VIDEO_CON_DISABLE;
+
+		switch (connection_type) {
+			case 0:
+				connectionType = VIDEO_CON_DISABLE;
+				break;
+			case 1:
+				connectionType = VIDEO_CON_HDMI;
+				break;
+			case 2:
+				connectionType = VIDEO_CON_DP;
+				break;
+			default:
+				return -1;
+		};
+
 		if (LCR_SetIT6535PowerMode(connectionType) < 0) {
 			std::cout << "Error: Unable to set IT6535 power mode" << std::endl;
 			return -1;
 		};
+
 		return 0;
+	};
+
+	int GetConnectionType() {
+
+		static API_VideoConnector_t powerMode;
+		if (LCR_GetIT6535PowerMode(&powerMode) < 0) {
+			std::cout << "Error: Unable to get IT6535 power mode" << std::endl;
+			return -1;
+		};
+		if (powerMode == VIDEO_CON_DISABLE) {
+			return 0;
+		};
+		if (powerMode == VIDEO_CON_HDMI) {
+			return 1;
+		};
+		if (powerMode == VIDEO_CON_DP) {
+			return 2;
+		};
+
+
 	};
 
 	int SetVideoPatternMode() {
@@ -146,7 +185,7 @@ namespace PLM {
 			return -1;
 		}
 
-		std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Wait for 1 second
+		std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Wait for 0.5 second
 
 		if (LCR_GetMode(&SLmode) == 0) {
 			if (SLmode != PTN_MODE_VIDEO) {
@@ -158,46 +197,70 @@ namespace PLM {
 		return 0;
 	};
 
-	int UpdateLUT(int play_mode) {
+	int GetVideoPatternMode() {
+		API_DisplayMode_t SLmode = PTN_MODE_DISABLE;
+		if (LCR_GetMode(&SLmode) == 0) {
+			if (SLmode != PTN_MODE_VIDEO) {
+				return -1;
+			}
+		};
+		return 0;
+	};
 
-		#define NUM_BIT_ELEMENTS 24
-		std::vector<BitElement> bitLayout(NUM_BIT_ELEMENTS);
+	int UpdateLUT(int play_mode, int connection_type) {
+		// play_mode = 0 -> Play Once
+		// play_mode = 1 -> Continuous (Repeat mode)
+		// connection_type = 1 -> HDMI
+		// connection_type = 2 -> DisplayPort
+
+		PLM::Stop();
+
+		const int NUM_BIT_ELEMENTS = 24;
+		std::vector<BitElement> bit_layout(NUM_BIT_ELEMENTS);
+
+		if (connection_type != 1 && connection_type != 2) {
+			std::cout << "Error: Invalid connection type" << std::endl;
+			return -1;
+		};
+
+		unsigned int exposure = connection_type == 1 ? 1388 : 694; // 1388 microseconds for HDMI, 694 microseconds for DisplayPort
 
 		for (int i = 0; i < NUM_BIT_ELEMENTS; i++) {
-			bitLayout[i].splashImageBitPos = bitLayoutHDMI[i][0];
-			bitLayout[i].bits = bitLayoutHDMI[i][1];
-			bitLayout[i].exposure = bitLayoutHDMI[i][2];
-			bitLayout[i].darkPeriod = bitLayoutHDMI[i][3];
-			bitLayout[i].color = static_cast<BitElement::Color>(bitLayoutHDMI[i][4]);
-			bitLayout[i].trigIn = bitLayoutHDMI[i][5] != 0; // bool
-			bitLayout[i].trigOut2 = bitLayoutHDMI[i][6] != 0; // bool
-			bitLayout[i].clear = bitLayoutHDMI[i][7] != 0;	// bool
-			bitLayout[i].splashImageIndex = 0; 
+			bit_layout[i].splashImageBitPos = bit_layout_default[i][0];
+			bit_layout[i].bits = bit_layout_default[i][1];
+			bit_layout[i].exposure = exposure;
+			bit_layout[i].darkPeriod = bit_layout_default[i][3];
+			bit_layout[i].color = static_cast<BitElement::Color>(bit_layout_default[i][4]);
+			bit_layout[i].trigIn = bit_layout_default[i][5] != 0; // bool
+			bit_layout[i].trigOut2 = bit_layout_default[i][6] != 0; // bool
+			bit_layout[i].clear = bit_layout_default[i][7] != 0;	// bool
+			bit_layout[i].splashImageIndex = 0; 
 		}
 
-		int res;
+		int res = 0;
 		char errStr[255];
 
-		if (bitLayout.size() <= 0){
+		if (bit_layout.size() <= 0){
 			std::cout << "Error:No pattern sequence to send" << std::endl;
 			return -1;
 		}
 
 		LCR_ClearPatLut();
 
-		for (int i = 0; i < bitLayout.size(); i++){
+		for (int i = 0; i < bit_layout.size(); i++){
 			if (LCR_AddToPatLut(
 				i, 
-				bitLayout[i].exposure, 
-				bitLayout[i].clear, 
-				bitLayout[i].bits, 
-				bitLayout[i].color, 
-				bitLayout[i].trigIn, 
-				bitLayout[i].darkPeriod, 
-				bitLayout[i].trigOut2, 
-				bitLayout[i].splashImageIndex, 
-				bitLayout[i].splashImageBitPos) < 0) {
+				bit_layout[i].exposure, 
+				bit_layout[i].clear, 
+				bit_layout[i].bits, 
+				bit_layout[i].color, 
+				bit_layout[i].trigIn, 
+				bit_layout[i].darkPeriod, 
+				bit_layout[i].trigOut2, 
+				bit_layout[i].splashImageIndex, 
+				bit_layout[i].splashImageBitPos) < 0) {
 				std::cout << "Error: Unable to add pattern number " << i << " to the LUT" << std::endl;
+				return -1;
 				break;
 			} else {
 				std::cout << "Added pattern number " << i << " to the LUT" << std::endl;
@@ -209,73 +272,71 @@ namespace PLM {
 			return -1;
 		}
 
-		if (play_mode == 0) {
-			res = play_mode == 0 ? LCR_SetPatternConfig(bitLayout.size(), 0) : LCR_SetPatternConfig(bitLayout.size(), bitLayout.size());
-		};
+		res = play_mode == 1 ? LCR_SetPatternConfig(bit_layout.size(), 0) : LCR_SetPatternConfig(bit_layout.size(), bit_layout.size());
 
 		if (res < 0) {
 			std::cout << "Unable to set pattern config" << std::endl;
 			return -1;
 		};
 
-		return 1;
+		return 0;
 
 	}
 
-	//int Initialize(int playMode) {
+	int Configure(int play_mode, int connection_type ) {
 
-	//	// playMode = 0 -> Play Once
-	//	// playMode = 1 -> Continuous
-	//	// Set 24 bit
-	//	// Set Port Swap ABC to ABC
-	//	// Set IT6535 receiver
-	//	// Set VideoPatternMode
-	//	// Update LUT
-	//	// Play
+		// play_mode = 0 -> Play Once
+		// play_mode = 1 -> Continuous (Repeat mode)
+		// connection_type = 0 -> HDMI
+		// connection_type = 1 -> DisplayPort
 
-	//	const int wait_time = 500; // 1 second
+		// Tasks :
+		//  -- Set 24 bit
+		// -- Set Port Swap ABC to ABC
+		// -- Set IT6535 receiver
+		// -- Set VideoPatternMode
+		// -- Update LUT
+		// -- Play
 
-	//	unsigned int source = 0; // Parallel RGB
-	//	unsigned int portWidth = 24; // 24 bits
-	//	SetSource(source, portWidth);
+		const unsigned int wait_time = 1500; // 1 second
 
-	//	std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
+		unsigned int source = 0; // Parallel RGB
+		unsigned int portWidth = 1; // 24 bits
+		if (SetSource(source, portWidth) < 1) return -1;
 
-	//	unsigned int port = 0; // Port 1
-	//	unsigned int swap = 0; // ABC -> ABC 
-	//	SetPortSwap(0, 0);
+		std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
 
-	//	std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
+		unsigned int port = 0; // Port 1
+		unsigned int swap = 0; // ABC -> ABC 
+		if (SetPortSwap(0, 0) < 0) return -1;
 
-	//	API_VideoConnector_t connectionType = VIDEO_CON_HDMI;
-	//	SetConnectionType(connectionType);
+		std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
 
-	//	std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
+		if (SetConnectionType(connection_type) < 0) return -1;
 
-	//	SetVideoPatternMode();
+		std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
 
-	//	std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
+		if (SetVideoPatternMode() < 0) return -1;
 
-	//	UpdateLUT();
+		std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
 
-	//	return 0;
-	//}
+		UpdateLUT(play_mode, connection_type);
+
+		return 0;
+	}
 
 };
 #else
 	namespace PLM {
-		int Play() {
-			return 0;
-		};
-		int Stop() {
-			return 0;
-		};
-		int Open() {
-			return 0;
-	};
-		int Close() {
-			return 0;
-		};
+		int Play() { return -1; };
+		int Stop() { return -1; };
+		int Open() { return -1; };
+		int Close() { return -1; };
+		int SetSource(unsigned int source, unsigned int port_width) { return -1; };
+		int SetPortSwap(unsigned int port, unsigned int swap) { return -1; };
+		int SetConnectionType(int connection_type) { return -1; };
+		int SetVideoPatternMode() { return -1; };
+		int UpdateLUT(int play_mode, int connection_type) { return -1; };
 	}
 #endif
 
