@@ -55,8 +55,12 @@ How does the code look? In MATLAB, operation is
 MAX_FRAMES = 90; % Each contains 24 holograms
 N = 1358;
 M = 800;
+x0 = 1920; y0 = 0; (Indicates where your PLM virtual monitor is relative to your main monitor)
 % Create a PLMController instance
-plm = PLMController(MAX_FRAMES, N, M);
+plm = PLMController(MAX_FRAMES, N, M, x0, y0);
+
+% Setup the PLM
+plm.StartUI(1);  % First monitor = 1 
 
 % Setup the PLM
 plm.StartUI(1);  % First monitor = 1 (adjust if needed)
