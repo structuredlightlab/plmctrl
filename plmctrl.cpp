@@ -413,6 +413,8 @@ int SetVideoPatternMode() {return PLM::SetVideoPatternMode();};
 int UpdateLUT(int play_mode, int connection_type) {return PLM::UpdateLUT(play_mode, connection_type);};
 int GetVideoPatternMode() {return PLM::GetVideoPatternMode();};
 int GetConnectionType() {return PLM::GetConnectionType();};
+int Open() {return PLM::Open();};
+int Close() {return PLM::Close();};
 //int Configure(unsigned int play_mode, unsigned int connection_type) {
 //	return PLM::Configure(play_mode, connection_type);
 //}
@@ -1272,9 +1274,12 @@ void DebugWindow(
 		ImGui::SeparatorText("PLM Status");
 		if (PLM::IsConnected() == false) {
 			PLM::Open();
-			PLM::GetVersion();
 		};
 		Status(plm_connected);
+		if (ui_cycles % 60 == 0) { // Update the status every 60 frames
+			PLM::GetVersion();
+			plm_connected = PLM::IsConnected();
+		};
 		plm_connected = PLM::IsConnected();
 		ImGui::Text("%d.%d.%d", (PLM::App_ver >> 24), ((PLM::App_ver << 8) >> 24), ((PLM::App_ver << 16) >> 16));
 		ImGui::BeginDisabled(!plm_connected);

@@ -60,6 +60,17 @@ class PLMController:
         self.lib.GetConnectionType.restype = ctypes.c_int
         self.lib.GetVideoPatternMode.argtypes = []
         self.lib.GetVideoPatternMode.restype = ctypes.c_int
+        self.lib.Open.argtypes = []
+        self.lib.Open.restype = ctypes.c_int
+        self.lib.Close.argtypes = []
+        self.lib.Close.restype = ctypes.c_int
+        
+    def open(self):
+        """Open the PLM connection."""
+        res = self.lib.Open()
+        if res == -1:
+            raise RuntimeError("Failed to open PLM connection (Is LightCrafter open?)")
+        return res
 
     def start_ui(self, monitor_id):
         """Setup the PLM window on a specified monitor."""
@@ -277,15 +288,15 @@ class PLMController:
             raise RuntimeError("SetConnectionType failed")
         
     def set_pixel_mode(self, connection_type):
-        """Set the connection type for the PLM (e.g., 0 for disable, 1 for HDMI, 2 for DisplayPort)."""
+        """Set pixel mode (e.g., 1 for Single Pixel (HDMI), 2 for Dual Pixel (DisplayPort)."""
         if not isinstance(connection_type, int):
             raise ValueError("connection_type must be an integer")
         
         print(f"Setting pixel mode to {'HDMI' if connection_type == 1 else 'DisplayPort'}")
 
-        res = self.lib.SetPortConfig(ctypes.c_int32(connection_type))
+        res = self.lib.SetPortConfig(ctypes.c_uint32(connection_type))
         if res == -1:
-            raise RuntimeError("SetConnectionType failed")
+            raise RuntimeError("SetPortConfig failed")
 
     def set_video_pattern_mode(self):
         """Set the video pattern mode."""

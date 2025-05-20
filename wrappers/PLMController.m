@@ -29,6 +29,7 @@ if ~libisloaded('plmctrl')
 end
 
 % Assign functions to the `plm` structure for controlling the PLM
+plm.Open = @Open;                     % Opens the USB communication with the PLM
 plm.StartUI = @StartUI;                % Setup the PLM window and UI
 plm.InsertFrames = @InsertFrames;        % Insert hologram frames into the PLM
 plm.SetFrameSequence = @SetFrameSequence; % Set the sequence of frames for display
@@ -62,6 +63,10 @@ plm.Configure = @Configure;
 
     function out = GetConnectionType()
         out = calllib('plmctrl', 'GetConnectionType');
+    end
+
+    function out = Open()
+        out = calllib('plmctrl', 'Open');
     end
 
 % Function to setup the PLM window on a specified monitor
@@ -230,7 +235,7 @@ plm.Configure = @Configure;
         end
     end
 
-    % New function to set pixel mode
+% New function to set pixel mode
     function SetPixelMode(connection_type)
         validateattributes(connection_type, {'numeric'}, {'scalar', 'integer'});
         if connection_type == 1
