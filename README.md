@@ -59,11 +59,13 @@ x0 = 1920; y0 = 0; (Indicates where your PLM virtual monitor is relative to your
 % Create a PLMController instance
 plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 
-% Setup the PLM
-plm.StartUI(1);  % First monitor = 1 
-
-% Setup the PLM
+% Start the PLM screen
 plm.StartUI(1);  % First monitor = 1 (adjust if needed)
+
+% Configure the PLM (Run only once per boot sequence)
+Continuous = 1;
+HDMI = 1;
+plm.Configure(Continuous, HDMI);
 
 % ---- Stuff ---- 
 [x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
