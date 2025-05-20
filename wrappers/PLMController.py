@@ -48,6 +48,8 @@ class PLMController:
         self.lib.SetSource.restype = ctypes.c_int
         self.lib.SetPortSwap.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
         self.lib.SetPortSwap.restype = ctypes.c_int
+        self.lib.SetPortConfig.argtypes = [ctypes.c_uint32]
+        self.lib.SetPortConfig.restype = ctypes.c_int
         self.lib.SetConnectionType.argtypes = [ctypes.c_int32]
         self.lib.SetConnectionType.restype = ctypes.c_int
         self.lib.SetVideoPatternMode.argtypes = []
@@ -273,6 +275,17 @@ class PLMController:
         res = self.lib.SetConnectionType(ctypes.c_int32(connection_type))
         if res == -1:
             raise RuntimeError("SetConnectionType failed")
+        
+    def set_pixel_mode(self, connection_type):
+        """Set the connection type for the PLM (e.g., 0 for disable, 1 for HDMI, 2 for DisplayPort)."""
+        if not isinstance(connection_type, int):
+            raise ValueError("connection_type must be an integer")
+        
+        print(f"Setting pixel mode to {'HDMI' if connection_type == 1 else 'DisplayPort'}")
+
+        res = self.lib.SetPortConfig(ctypes.c_int32(connection_type))
+        if res == -1:
+            raise RuntimeError("SetConnectionType failed")
 
     def set_video_pattern_mode(self):
         """Set the video pattern mode."""
@@ -320,6 +333,8 @@ class PLMController:
         # Set port swap for ports 0 and 1 to ABC -> ABC (0)
         self.set_port_swap(0, 0)
         self.set_port_swap(1, 0)
+
+        self.set_pixel_mode(connection_type)
         
         # Check and set connection type if not already 1
         if self.get_connection_type() != 1:

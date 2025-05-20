@@ -40,12 +40,6 @@ struct BitElement
 	}
 };
 
-typedef enum {
-	VIDEO_DISABLED,
-	VIDEO_HDMI,
-	VIDEO_DP,
-} ConnectionType;
-
 // They follow this order: splashImageBitPos, Bits, exposure, dark period, color, trigIn, trigOut2, clear
 const int bit_layout_default[24][8] = {
 	{ 0, 1, 1388, 0, 2, 1, 1, 0 },
@@ -129,6 +123,15 @@ namespace PLM {
 		};
 		return 0;
 	};
+
+	int SetPortConfig(unsigned int data_port, unsigned int pixel_clock, unsigned int data_enable, unsigned int sync_select) {
+		// HDMI: data_port = 0, pixel_clock = 0, data_enable = 0, sync_select = 0 -> Single Pixel (30 Hz)
+		// DP: data_port = 2, pixel_clock = 0, data_enable = 0, sync_select = 0 -> Dual Pixel (60 Hz)
+		if (LCR_SetPortConfig(data_port, pixel_clock, data_enable, sync_select) < 0) {
+			std::cout << "Error: Unable to set Port Config" << std::endl;
+			return -1;
+		};
+	}
 
 	int SetConnectionType(int connection_type) {
 

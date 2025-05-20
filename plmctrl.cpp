@@ -403,11 +403,19 @@ int Play() {return PLM::Play();};
 int Stop() {return PLM::Stop();};
 int SetSource(unsigned int source, unsigned int port_width) {return PLM::SetSource(source, port_width);};
 int SetPortSwap(unsigned int port, unsigned int swap) {return PLM::SetPortSwap(port, swap);};
+int SetPortConfig(int connection_type) { 
+	//HDMI = 1, DP = 2
+	if (connection_type != 1 && connection_type != 2) return -1; 
+	return PLM::SetPortConfig(connection_type == 1 ? 0 : 2, 0, 0, 0); 
+};
 int SetConnectionType(int connection_type) {return PLM::SetConnectionType(connection_type);};
 int SetVideoPatternMode() {return PLM::SetVideoPatternMode();};
 int UpdateLUT(int play_mode, int connection_type) {return PLM::UpdateLUT(play_mode, connection_type);};
 int GetVideoPatternMode() {return PLM::GetVideoPatternMode();};
 int GetConnectionType() {return PLM::GetConnectionType();};
+//int Configure(unsigned int play_mode, unsigned int connection_type) {
+//	return PLM::Configure(play_mode, connection_type);
+//}
 
 
 bool PauseUI() {
@@ -434,9 +442,6 @@ bool StartSequence(int number_of_frames) {
 	return true;
 }
 
-//unsigned int Configure(unsigned int play_mode, unsigned int connection_type) {
-//	return PLM::Configure(play_mode, connection_type);
-//}
 
 
 bool StartDisplaying() {
@@ -454,25 +459,6 @@ bool Resynchronise(unsigned long long offset) {
 	// IN CONSTRUCTION
 	return true;
 }
-
-//int PLMStatusThread() {
-//
-//	while (plm_monitoring_status) {
-//
-//		if (!plm_connected) {
-//			std::this_thread::sleep_for(std::chrono::milliseconds(100));
-//			continue;
-//		};
-//
-//		plm_reading_status.lock();
-//		LCR_GetStatus(&PLM::HWStatus, &PLM::SysStatus, &PLM::MainStatus);
-//		plm_reading_status.unlock();
-//
-//		std::this_thread::sleep_for(std::chrono::milliseconds(500));
-//	};
-//
-//	return 0;
-//}
 
 // Main code
 int UI(){

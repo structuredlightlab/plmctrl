@@ -48,6 +48,7 @@ extern "C" {
 
 	PLM_API int SetSource(unsigned int source, unsigned int portWidth);
 	PLM_API int SetPortSwap(unsigned int port, unsigned int swap);
+	PLM_API int SetPortConfig(int connection_type);
 	PLM_API int SetConnectionType(int connection_type);
 	PLM_API int SetVideoPatternMode();
 	PLM_API int UpdateLUT(int play_mode, int connection_type);
