@@ -15,7 +15,8 @@
         <p align="center">
             <a href="https://github.com/structuredlightlab/plmctrl/wiki/Known-issues">⚠️Known issues</a> · 
             <a href="https://github.com/structuredlightlab/plmctrl/wiki/Experiment">🧪Experiment</a> · 
-            <a href="https://github.com/structuredlightlab/plmctrl/wiki/LightCrafterDLP900-configuration">⚙️LightCrafterDLP900 configuration</a> ·  
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/Configuring-the-PLM-using-plmctrl">⚙️Configuring the PLM using this library</a> ·  
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/LightCrafterDLP900-configuration">⚙️Configuring using LightCrafterDLP900</a> ·  
             <a href="https://github.com/structuredlightlab/plmctrl?tab=readme-ov-file#contact"> 📧Contact </a>
         </p>
     </div>
