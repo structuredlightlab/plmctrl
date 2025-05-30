@@ -1,5 +1,5 @@
-# <img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl — Updated on 20/May/2025
 
+<img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl — Updated on 20/May/2025
 ![Warning](https://img.shields.io/badge/under%20development%20-yellow)
 [![arXiv](https://img.shields.io/badge/arXiv-2409.01289-green.svg)](https://arxiv.org/abs/2409.01289)
 [![Journal](https://img.shields.io/badge/Optics-Express-green.svg)](https://opg.optica.org/oe/fulltext.cfm?uri=oe-32-24-43300&id=563432)
@@ -60,8 +60,10 @@ x0 = 1920; y0 = 0; (Indicates where your PLM virtual monitor is relative to your
 % Create a PLMController instance
 plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 
-% Start the PLM screen
-plm.StartUI(1);  % First monitor = 1 (adjust if needed)
+
+% Setup the PLM
+plm.StartUI(1);  % First monitor = 1 
+
 
 % Configure the PLM (Run only once per boot sequence)
 Continuous = 1;
@@ -81,8 +83,8 @@ for i = 1:numHolograms
     phase(:,:,i) = mod(wedge(alpha, beta), 2*pi)/(2*pi);
 end
 
-% ---- Bitpacks 24 holograms into a single RGB frame ---- 
-frame = plm.BitpackHolograms(phase);
+% ---- Bitpacks 24 holograms into a single RGB frame following RGB-little endian order ---- 
+frame = plm.BitpackHologramsGPU(phase);
 
 % ---- Uploads a bitpacked hologram to the PLM ----
 offset = 0;
@@ -100,7 +102,7 @@ plm.Cleanup();
 ## External Code/Libraries/used by PLMCtrl
 * [Dear ImGui](https://github.com/ocornut/imgui) for GUI handling and wrapping graphics API
 * [hidapi](https://github.com/libusb/hidapi) for USB communication with the PLM
-* Microsoft's DirectX 11 as Graphics API
+* Microsoft's DirectX 11 as Graphics API (Meaning it runs on Windows only)
 
 ## Contact
 * PLMCtrl is developed and maintained by José C. A. Rocha and Terry Wright
