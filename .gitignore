@@ -43,6 +43,7 @@
 /include/PLM/usb*
 
 /__pycache__/
+*.pyc
 *.asv
 
 *.ini
