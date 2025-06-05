@@ -401,6 +401,7 @@ bool Cleanup() {
 
 int Play() {return PLM::Play();};
 int Stop() {return PLM::Stop();};
+
 int SetSource(unsigned int source, unsigned int port_width) {return PLM::SetSource(source, port_width);};
 int SetPortSwap(unsigned int port, unsigned int swap) {return PLM::SetPortSwap(port, swap);};
 int SetPortConfig(int connection_type) { 
@@ -683,7 +684,7 @@ int UI(){
 		// PLM frame window
 		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, pSamplerState, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
 
-		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
+		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
 
 		DebugWindow(show_debug_window, io);
 

@@ -34,8 +34,10 @@ plm.StartUI = @StartUI;                % Setup the PLM window and UI
 plm.InsertFrames = @InsertFrames;        % Insert hologram frames into the PLM
 plm.SetFrameSequence = @SetFrameSequence; % Set the sequence of frames for display
 plm.StartSequence = @StartSequence;      % Start displaying the sequence of frames
-plm.StopUI = @StopUI;                    % Stop the PLM UI
-plm.PauseUI = @PauseUI;                    % Pause the PLM UI
+plm.Play = @Play;                    % PLM starts reading from the screen
+plm.Stop = @Stop;                    % PLM stops reading from the screen
+plm.StopUI = @StopUI;                    % Stop the PLM debug UI
+plm.PauseUI = @PauseUI;                    % Pause the PLM debug UI
 plm.ResumeUI = @ResumeUI;                    % Resume the PLM UI
 plm.SetLookupTable = @SetLookupTable;    % Set the lookup table for phase levels
 plm.SetFrame = @SetFrame;                % Set a specific frame to display
@@ -67,6 +69,14 @@ plm.Configure = @Configure;
 
     function out = Open()
         out = calllib('plmctrl', 'Open');
+    end
+
+    function out = Play()
+        out = calllib('plmctrl', 'Play');
+    end
+
+    function out = Stop()
+        out = calllib('plmctrl', 'Stop');
     end
 
 % Function to setup the PLM window on a specified monitor

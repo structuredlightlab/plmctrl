@@ -64,12 +64,29 @@ class PLMController:
         self.lib.Open.restype = ctypes.c_int
         self.lib.Close.argtypes = []
         self.lib.Close.restype = ctypes.c_int
+        self.lib.Play.argtypes = []
+        self.lib.Play.restype = ctypes.c_int
+        self.lib.Stop.argtypes = []
+        self.lib.Stop.restype = ctypes.c_int
         
     def open(self):
         """Open the PLM connection."""
         res = self.lib.Open()
         if res == -1:
             raise RuntimeError("Failed to open PLM connection (Is LightCrafter open?)")
+        return res
+    
+    def play(self):
+        """PLM starts reading from the screen"""
+        res = self.lib.Play()
+        if res == -1:
+            raise RuntimeError("Failed to start the sequence display")
+        return res
+    def stop(self):
+        """PLM stops reading from the screen."""
+        res = self.lib.Stop()
+        if res == -1:
+            raise RuntimeError("Failed to stop the sequence display")
         return res
 
     def start_ui(self, monitor_id):
