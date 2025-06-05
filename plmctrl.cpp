@@ -683,7 +683,7 @@ int UI(){
 		// PLM frame window
 		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, pSamplerState, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
 
-		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
+		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
 
 		DebugWindow(show_debug_window, io);
 
