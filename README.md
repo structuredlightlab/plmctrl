@@ -72,7 +72,7 @@ After ```plm.StartUI()``` a window like this should pop up in your main monitor
   <img src="https://github.com/user-attachments/assets/4a4fc0ac-86fe-4c15-9386-9ff2c08d024d" alt="PLM UI window" width="300"/>
 </p>
 
-This is how you configure the PLM after boot (this is all to avoid using DLP LightCrafter every time)
+This is how you configure the PLM after boot (this is all to avoid using DLP LightCrafter every time). More on this [here](https://github.com/structuredlightlab/plmctrl/wiki/Configuring-the-PLM-using-plmctrl).
 ```MATLAB
 % Configure PLM (only once per boot)
 HDMI = 1; % DisplayPort = 2
