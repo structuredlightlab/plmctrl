@@ -64,7 +64,7 @@ plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 % This will open USB comms with the PLM so we can control some of its settings.
 plm.Open(); 
 
-% Setup the PLM
+% Start the display. If you're using DisplayPort. Configure the PLM before calling this, as the virtual monitor won't show up before configuring it.
 plm.StartUI();
 ```
 After ```plm.StartUI()``` a window like this should pop up in your main monitor
