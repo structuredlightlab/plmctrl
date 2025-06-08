@@ -1,9 +1,10 @@
 
-<img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl — Updated on 20/May/2025
+# <img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl — Updated on 8/Jun/2025
+
 ![Warning](https://img.shields.io/badge/under%20development%20-yellow)
 [![arXiv](https://img.shields.io/badge/arXiv-2409.01289-green.svg)](https://arxiv.org/abs/2409.01289)
 [![Journal](https://img.shields.io/badge/Optics-Express-green.svg)](https://opg.optica.org/oe/fulltext.cfm?uri=oe-32-24-43300&id=563432)
-![Warning](https://img.shields.io/badge/version-0.5.0b-red)
+![Warning](https://img.shields.io/badge/version-0.6.0b-red)
 <div style="display: flex; align-items: center;">
     <div>
         <p align="center">
@@ -42,8 +43,8 @@ If you have used ```plmctrl``` in a scientific publication, we would appreciate 
 }
 ```
 
-The Texas Instruments Phase-only Light Modulator is a MEMS-based Spatial Light Modulator. It's an array of µ-mirrors that electrostatically piston up and down and can change the phase of the reflected light on a pixel-by-pixel basis. 
-There are three PLM models out there, with diagonal screen sizes of 0.47", 0.67", and 0.98". Here we are providing supporting code for the 0.67" PLM Evaluation Module (EVM).
+The Texas Instruments Phase-only Light Modulator is a MEMS-based Spatial Light Modulator. It's an array of µ-mirrors that electrostatically piston vertically and can change the phase of the reflected light on a pixel-by-pixel basis. 
+There are three TI PLM models out there, with diagonal screen sizes of 0.47", 0.67", and 0.98". Here we are providing supporting code for the 0.67" PLM Evaluation Module (EVM).
 
 The PLM builds on top of existing DLP technology, and the 0.67" PLM (DLP6750 EVM) is driven by TI's [DLP670S](https://www.ti.com/product/DLP670S) board and contains an array of 1358 x 800 µ-mirrors that pistons at 16 different heights. The PLM can reconfigure the heights of all mirrors at rates up to 1440 Hz.
 While DLP670S has some internal flash memory to store and display a few holograms, it's usually not enough for a whole optics experiment, so, the main way of using this PLM is through a video interface. Here, we provide code for using the PLM through its video interface. We provide functions for creating the holograms, bitpacking 24 holograms into a single frame, displaying that frame to the PLM screen, and changing that frame without frame-drops to ensure maximum hologram-rate.
@@ -51,25 +52,48 @@ While DLP670S has some internal flash memory to store and display a few hologram
 The PLM offers two mode of connections, HDMI and DisplayPort. Connected through the HDMI, the PLM can display different holograms at a rate of 720 Hz, and, through the DisplayPort 1440 Hz. It is reported that storing patterns in the DLP670S's internal flash memory can acheive hologram rates up to 5.76 kHz, but this operation mode is not documented.
 
 How does the code look? In MATLAB, operation is
-
 ```MATLAB
-MAX_FRAMES = 90; % Each contains 24 holograms
+MAX_FRAMES = 64; % Each contains 24 holograms
 N = 1358;
 M = 800;
+
 x0 = 1920; y0 = 0; (Indicates where your PLM virtual monitor is relative to your main monitor)
 % Create a PLMController instance
 plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 
+% This will open USB comms with the PLM so we can control some of its settings.
+plm.Open(); 
 
 % Setup the PLM
-plm.StartUI(1);  % First monitor = 1 
+plm.StartUI();
+```
+After ```plm.StartUI()``` a window like this should pop up in your main monitor
+<p align="left" >
+  <img src="https://github.com/user-attachments/assets/4a4fc0ac-86fe-4c15-9386-9ff2c08d024d" alt="PLM UI window" width="300"/>
+</p>
+
+This is how you configure the PLM after boot (this is all to avoid using DLP LightCrafter every time)
+```MATLAB
+% Configure PLM (only once per boot)
+HDMI = 1; % DisplayPort = 2
+Continuous = 1; % Play once = 0
+plm.SetSource(0, 1);              % Parallel RGB, 24-bit
+plm.SetPortSwap(0, 0);            % ABC → ABC
+plm.SetPortSwap(1, 0);
+plm.SetPixelMode(HDMI);           % HDMI = 1
+plm.SetConnectionType(HDMI);
+pause(5); % It's better to wait between each command.
+plm.SetVideoPatternMode();
+pause(5);
+plm.UpdateLUT(Continuous, HDMI);
 
 
-% Configure the PLM (Run only once per boot sequence)
-Continuous = 1;
-HDMI = 1;
-plm.Configure(Continuous, HDMI);
+% PLM will start reading from the screen continuously (or once, depending on your play_mode)
+plm.Play(); % to stop: plm.Stop();
+```
 
+Inserting some frames/holograms.
+```MATLAB
 % ---- Stuff ---- 
 [x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
 wedge = @(alpha, beta) alpha*x + beta*y;
