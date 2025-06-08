@@ -1,8 +1,9 @@
 import ctypes
 import numpy as np
+import time
 
 class PLMController:
-    def __init__(self, MAX_FRAMES, width, height, dll_path='plmctrl.dll', x0 = 1920, y0 = 0 ):
+    def __init__(self, MAX_FRAMES:int, width:int, height:int, dll_path='plmctrl.dll', x0:int = 1920, y0:int = 0 ):
         """
         Initialize the PLMController.
 
@@ -24,7 +25,7 @@ class PLMController:
         self.lib = ctypes.CDLL(dll_path)
         
         # Define function prototypes with argtypes and restype
-        self.lib.SetPLMWindowPos.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self.lib.SetPLMWindowPos.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.lib.StartUI.argtypes = [ctypes.c_int]
         self.lib.InsertPLMFrame.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.lib.InsertPLMFrame.restype = ctypes.c_int
@@ -42,12 +43,55 @@ class PLMController:
         self.lib.BitpackAndInsertGPU.argtypes = [ctypes.POINTER(ctypes.c_float), 
                                                  ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 
-    def start_ui(self, monitor_id):
-        """Setup the PLM window on a specified monitor."""
-        if not isinstance(monitor_id, int) or monitor_id <= 0:
-            raise ValueError("monitor_id must be a positive integer")
+        # PLM USB comms functions
+        self.lib.SetSource.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        self.lib.SetSource.restype = ctypes.c_int
+        self.lib.SetPortSwap.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        self.lib.SetPortSwap.restype = ctypes.c_int
+        self.lib.SetPortConfig.argtypes = [ctypes.c_uint32]
+        self.lib.SetPortConfig.restype = ctypes.c_int
+        self.lib.SetConnectionType.argtypes = [ctypes.c_int32]
+        self.lib.SetConnectionType.restype = ctypes.c_int
+        self.lib.SetVideoPatternMode.argtypes = []
+        self.lib.SetVideoPatternMode.restype = ctypes.c_int
+        self.lib.UpdateLUT.argtypes = [ctypes.c_int32, ctypes.c_int32]
+        self.lib.UpdateLUT.restype = ctypes.c_int
+        self.lib.GetConnectionType.argtypes = []
+        self.lib.GetConnectionType.restype = ctypes.c_int
+        self.lib.GetVideoPatternMode.argtypes = []
+        self.lib.GetVideoPatternMode.restype = ctypes.c_int
+        self.lib.Open.argtypes = []
+        self.lib.Open.restype = ctypes.c_int
+        self.lib.Close.argtypes = []
+        self.lib.Close.restype = ctypes.c_int
+        self.lib.Play.argtypes = []
+        self.lib.Play.restype = ctypes.c_int
+        self.lib.Stop.argtypes = []
+        self.lib.Stop.restype = ctypes.c_int
         
-        self.lib.SetPLMWindowPos(self.N, self.M, monitor_id, self.x0, self.y0)
+    def open(self):
+        """Open the PLM connection."""
+        res = self.lib.Open()
+        if res == -1:
+            raise RuntimeError("Failed to open PLM connection (Is LightCrafter open?)")
+        return res
+    
+    def play(self):
+        """PLM starts reading from the screen"""
+        res = self.lib.Play()
+        if res == -1:
+            raise RuntimeError("Failed to start the sequence display")
+        return res
+    def stop(self):
+        """PLM stops reading from the screen."""
+        res = self.lib.Stop()
+        if res == -1:
+            raise RuntimeError("Failed to stop the sequence display")
+        return res
+
+    def start_ui(self):
+        """Setup the PLM window on specified coordinates."""
+        self.lib.SetPLMWindowPos(self.N, self.M, self.x0, self.y0)
         self.lib.StartUI(self.MAX_FRAMES)
         
     def set_windowed(self, windowed):
@@ -98,6 +142,9 @@ class PLMController:
         
         if not sequence.flags['C_CONTIGUOUS']:
             sequence = np.ascontiguousarray(sequence)
+
+        if len(sequence) < self.MAX_FRAMES:
+            raise ValueError(f"sequence length must be {self.MAX_FRAMES}")
         
         sequence_ptr = sequence.astype(np.uint64).ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
         self.lib.SetFrameSequence(sequence_ptr, len(sequence))
@@ -221,12 +268,112 @@ class PLMController:
         res = self.lib.BitpackAndInsertGPU(phase_ptr, self.N, self.M, num_patterns, offset)
         return res
 
+    # New methods for configuration
+    def set_source(self, source, port_width):
+        """Set the source and port width for the PLM."""
+        if not isinstance(source, int) or source < 0:
+            raise ValueError("source must be a non-negative integer")
+        if not isinstance(port_width, int) or port_width < 0:
+            raise ValueError("port_width must be a non-negative integer")
+        
+        res = self.lib.SetSource(ctypes.c_uint32(source), ctypes.c_uint32(port_width))
+        if res == -1:
+            raise RuntimeError("SetSource failed")
+
+    def set_port_swap(self, port, swap):
+        """Set the port swap configuration."""
+        if not isinstance(port, int) or port < 0:
+            raise ValueError("port must be a non-negative integer")
+        if not isinstance(swap, int) or swap < 0:
+            raise ValueError("swap must be a non-negative integer")
+        
+        res = self.lib.SetPortSwap(ctypes.c_uint32(port), ctypes.c_uint32(swap))
+        if res == -1:
+            raise RuntimeError("SetPortSwap failed")
+
+    def set_connection_type(self, connection_type):
+        """Set the connection type for the PLM (e.g., 0 for disable, 1 for HDMI, 2 for DisplayPort)."""
+        if not isinstance(connection_type, int):
+            raise ValueError("connection_type must be an integer")
+        
+        print(f"Setting connection to {connection_type}")
+        res = self.lib.SetConnectionType(ctypes.c_int32(connection_type))
+        if res == -1:
+            raise RuntimeError("SetConnectionType failed")
+        
+    def set_pixel_mode(self, connection_type):
+        """Set pixel mode (e.g., 1 for Single Pixel (HDMI), 2 for Dual Pixel (DisplayPort)."""
+        if not isinstance(connection_type, int):
+            raise ValueError("connection_type must be an integer")
+        
+        print(f"Setting pixel mode to {'HDMI' if connection_type == 1 else 'DisplayPort'}")
+
+        res = self.lib.SetPortConfig(ctypes.c_uint32(connection_type))
+        if res == -1:
+            raise RuntimeError("SetPortConfig failed")
+
+    def set_video_pattern_mode(self):
+        """Set the video pattern mode."""
+        print("Setting Video Pattern Mode")
+        res = self.lib.SetVideoPatternMode()
+        if res == -1:
+            raise RuntimeError("SetVideoPatternMode failed")
+
+    def update_lut(self, play_mode, connection_type):
+        """Update the lookup table with play mode and connection type."""
+        if not isinstance(play_mode, int) or play_mode not in [0, 1]:
+            raise ValueError("play_mode must be 0 or 1")
+        if not isinstance(connection_type, int) or connection_type <= 0 or connection_type > 2:
+            raise ValueError("connection_type must be 1 or 2")
+        
+        print("Updating bit lookup-table")
+        res = self.lib.UpdateLUT(ctypes.c_int32(play_mode), ctypes.c_int32(connection_type))
+        if res == -1:
+            raise RuntimeError("UpdateLUT failed")
+
+    def get_connection_type(self):
+        """Get the current connection type."""
+        return self.lib.GetConnectionType()
+
+    def get_video_pattern_mode(self):
+        """Get the current video pattern mode."""
+        return self.lib.GetVideoPatternMode()
+
+    def configure(self, play_mode, connection_type):
+        """
+        Configure the PLM with the specified play mode and connection type.
+        
+        Args:
+            play_mode (int): 0 or 1 to set the play mode.
+            connection_type (int): 1 for HDMI, 2 for DisplayPort.
+        """
+        if not isinstance(play_mode, int) or play_mode not in [0, 1]:
+            raise ValueError("play_mode must be 0 or 1")
+        if not isinstance(connection_type, int) or connection_type <= 0 or connection_type > 2:
+            raise ValueError("connection_type must be 1 or 2")
+        
+        # Set source to Parallel RGB (0) and port width to 24 bits (1)
+        self.set_source(0, 1)
+        
+        # Set port swap for ports 0 and 1 to ABC -> ABC (0)
+        self.set_port_swap(0, 0)
+        self.set_port_swap(1, 0)
+
+        self.set_pixel_mode(connection_type)
+        
+        # Check and set connection type if not already 1
+        if self.get_connection_type() != 1:
+            self.set_connection_type(connection_type)
+            time.sleep(5.5)  # Wait
+        
+        # Set video pattern mode
+        self.set_video_pattern_mode()
+        time.sleep(2.0)  # Wait
+        
+        # Update LUT with play mode and connection type
+        self.update_lut(play_mode, connection_type)
+
     def cleanup(self):
         """Cleanup and unload the PLM library."""
         self.lib.StopUI()
         # Library unloading is handled by Python at process exit
-
-# Usage example:
-# plm = PLMController(1000, 1358, 800, r'C:\dev\plmctrl\plmctrl.dll')
-# plm.start_ui(1)
-# plm.cleanup()

@@ -1,8 +1,8 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Structured Light Lab
- * Version: 0.4.0 alpha
- * Date: 22/Nov/2024
+ * Version: 0.6.0 beta
+ * Date: 8/Jun/2025
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
@@ -10,18 +10,23 @@
  * display of holograms on the PLM, ensuring precise frame pacing during hologram sequence display.
 
  * If you use plmctrl in your research, please cite:
- * @article{joserocha,
- *     title         = {Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator},
- *     author        = {J. C. A. Rocha, ...},
- *     journal       = {...},
- *     volume        = {...},
- *     number        = {...},
- *     pages         = {...},
- *     year          = {...},
- *     doi           = {...},
- * }
+ * 
+	@article{rocha2024plm,
+		author = {Jos\'{e} C. A. Rocha and Terry Wright and Un\.{e} G. B\={u}tait\.{e} and Joel Carpenter and George S. D. Gordon and David B. Phillips},
+		journal = {Opt. Express},
+		number = {24},
+		pages = {43300--43314},
+		publisher = {Optica Publishing Group},
+		title = {Fast and light-efficient wavefront shaping with a MEMS phase-only light modulator},
+		volume = {32},
+		month = {Nov},
+		year = {2024},
+		url = {https://opg.optica.org/oe/abstract.cfm?URI=oe-32-24-43300}
+	}
+
  *
  * External Dependencies:
+ * - DirectX 11: Graphics API for rendering
  * - Dear ImGui: GUI handling and graphics API wrapping
  * - hidapi: USB communication with the PLM
  */
@@ -47,7 +52,6 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
-
 
 #include "PLM/PLM.h"
 #include "plmctrl.h"
@@ -97,6 +101,7 @@ uint8_t* plm_image_ptr = nullptr;
 
 std::mutex mutex;
 std::mutex plm_image_mutex;
+std::mutex plm_reading_status;
 
 int N = 200, M = 200, monitor_id = 0;
 
@@ -112,6 +117,7 @@ enum PLM_MODE {
 PLM_MODE plm_mode = PLM_IDLE;
 
 bool plm_connected = false;
+bool plm_monitoring_status = false;
 bool first_frame_trigger = false;
 bool start_playing_trigger = false;
 bool plm_is_displaying = false;
@@ -121,6 +127,7 @@ bool continuous_mode = false;
 std::atomic<bool> pause_UI = false;
 std::atomic<bool> bitpacking_in_progress = false;
 std::atomic<bool> UI_is_rendering = false;
+
 
 
 int frames_to_play = 0;
@@ -170,6 +177,8 @@ int phase_map[] = {
 };
 
 std::thread ui_thread;
+std::thread plm_status_thread;
+
 
 // Forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
@@ -226,8 +235,7 @@ bool CompileComputeShader(ID3D11Device* device)
 	pBlob->Release();
 	if (FAILED(hr))
 	{
-		std::cerr << "CreateComputeShader failed with HRESULT: 0x"
-			<< std::hex << hr << std::dec << std::endl;
+		std::cerr << "CreateComputeShader failed with HRESULT: 0x" << std::hex << hr << std::dec << std::endl;
 		return false;
 	}
 
@@ -395,6 +403,35 @@ bool Cleanup() {
 int Play() {return PLM::Play();};
 int Stop() {return PLM::Stop();};
 
+int SetSource(unsigned int source, unsigned int port_width) {return PLM::SetSource(source, port_width);};
+int SetPortSwap(unsigned int port, unsigned int swap) {return PLM::SetPortSwap(port, swap);};
+int SetPortConfig(int connection_type) { 
+	//HDMI = 1, DP = 2
+	if (connection_type != 1 && connection_type != 2) return -1; 
+	return PLM::SetPortConfig(connection_type == 1 ? 0 : 2, 0, 0, 0); 
+};
+int SetConnectionType(int connection_type) {return PLM::SetConnectionType(connection_type);};
+int SetVideoPatternMode() {return PLM::SetVideoPatternMode();};
+int UpdateLUT(int play_mode, int connection_type) {return PLM::UpdateLUT(play_mode, connection_type);};
+int GetVideoPatternMode() {return PLM::GetVideoPatternMode();};
+int GetConnectionType() {return PLM::GetConnectionType();};
+int Open() {return PLM::Open();};
+int Close() {return PLM::Close();};
+//int Configure(unsigned int play_mode, unsigned int connection_type) {
+//	return PLM::Configure(play_mode, connection_type);
+//}
+
+
+bool PauseUI() {
+	pause_UI = true;
+	return true;
+};
+
+bool ResumeUI() {
+	pause_UI = false;
+	return true;
+};
+
 bool StartSequence(int number_of_frames) {
 
 	if (number_of_frames > MAX_FRAMES) {
@@ -408,6 +445,8 @@ bool StartSequence(int number_of_frames) {
 
 	return true;
 }
+
+
 
 bool StartDisplaying() {
 	// Start displaying continuously on the PLM
@@ -424,16 +463,6 @@ bool Resynchronise(unsigned long long offset) {
 	// IN CONSTRUCTION
 	return true;
 }
-
-bool PauseUI() {
-	pause_UI = true;
-	return true;
-};
-
-bool ResumeUI() {
-	pause_UI = false;
-	return true;
-};
 
 // Main code
 int UI(){
@@ -553,12 +582,10 @@ int UI(){
 	while (running && !done)
 	{
 		UI_is_rendering.store(false);
-
 		if (bitpacking_in_progress.load() || pause_UI.load()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			continue;
 		};
-
 		UI_is_rendering.store(true);
 
 		if (frames_to_play < 0 && sequence_active) {
@@ -658,7 +685,6 @@ int UI(){
 		// PLM frame window
 		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, pSamplerState, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
 
-		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
 
 		DebugWindow(show_debug_window, io);
 
@@ -677,8 +703,6 @@ int UI(){
 		};
 
 		int display_w, display_h;
-
-
 
 		// Present with VSync. This is the most important part for correct frame-pace
 		HRESULT hr = g_pSwapChain->Present(1, 0);
@@ -795,18 +819,13 @@ void SetWindowed(bool windowed_mode) {
 	windowed = windowed_mode;
 };
 
-void SetPLMWindowPos(int width, int height, int monitor, int x0 = 1920, int y0 = 0 ) {
+void SetPLMWindowPos(int width, int height, int x0 = 0, int y0 = 0 ) {
 	N = width;
 	M = height;
-	monitor_id = monitor;
 	window_x0 = x0;
 	window_y0 = y0;
 };
 
-//void SetPLMWindowXY(int x0, int y0) {
-//	window_x0 = x0;
-//	window_y0 = y0;
-//};
 
 void SetLookupTable(float* lut) {
 	for (int i = 0; i < 17; i++) {
@@ -981,7 +1000,9 @@ bool BitpackHologramsGPU(
 
 	//Check if UI_is_rendering is true
 	while (UI_is_rendering.load()) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		// show bitpacking_in_progress value
+		//std::cout << "Bitpacking in progress: " << bitpacking_in_progress.load() << std::endl;
 	};
 
 	// Check if the number of holograms is within the limit
@@ -1213,185 +1234,335 @@ void DebugWindow(
 	ImGuiIO& io
 ) {
 
-	if (!show) return;
-
-	ImGui::Begin("PLM Debug Panel");
-	ImGui::Text("Frametime %f ms (%f Hz)", 1000.0 * io.DeltaTime, io.Framerate);
-	ImGui::Text("Framerate needs to match PLM's");
-	ImGui::Text("Left: %d, Right: %d, Top: %d, Bottom: %d", monitorRect.left, monitorRect.right, monitorRect.top, monitorRect.bottom);
-
-
-#ifndef INCLUDE_LIGHTCRAFTER_WRAPPERS
-	ImGui::SeparatorText("!! Warning !!");
-	ImGui::Text("- This version does not support commanding the PLM to Play/Stop the sequence display");
-	ImGui::Text("- To enable this feature, follow the Wiki entry on this topic");
-#else
-	ImGui::SeparatorText("PLM Status");
-	if (PLM::IsConnected() == false) {
-		PLM::Open();
-		PLM::GetVersion();
-	};
-	Status(plm_connected);
-	plm_connected = PLM::IsConnected();
-	ImGui::Text("%d.%d.%d", (PLM::App_ver >> 24), ((PLM::App_ver << 8) >> 24), ((PLM::App_ver << 16) >> 16));
-	ImGui::BeginDisabled(!plm_connected);
-	Status(plm_is_displaying);
-	if (ImGui::Button("Start")) {
-		PLM::Play();
-		plm_is_displaying = true;
-	};
-	ImGui::SameLine();
-	if (ImGui::Button("Stop")) {
-		PLM::Stop();
-		plm_is_displaying = false;
-	};
-	ImGui::EndDisabled();
-#endif
-
-
-	//Status(first_frame_trigger);
-	ImGui::SeparatorText("Sequence");
-	ImGui::Text("Frames to play: %d/%d", frames_to_play, frames_in_sequence);
-	ImGui::Text("Buffer Index %d/%d", 24 * buffer_index, 24 * frames_in_sequence);
-
-	ImGui::Text("Frame order:");
-	ImGui::SameLine();
-	ImGui::Text("[");
-	ImGui::SameLine();
-	for (int i = 0; i < (MAX_FRAMES <= 4 ? (MAX_FRAMES - 1) : 4); ++i) {
-		ImGui::Text("%llu", frame_order[i]);
-		ImGui::SameLine();
-	};
-	ImGui::Text("... %llu], total: %d", frame_order[MAX_FRAMES - 1], MAX_FRAMES);
-
-	ImGui::SeparatorText("Frame Data");
-	if (ImGui::TreeNode("Frame on display")) {
-		static ImVec2 ulim = ImVec2(0.0f, 1.0f);
-		static ImVec2 vlim = ImVec2(0.0f, 1.0f);
-		ImGui::Image((void*)data_texture_srv, ImVec2((float)N / 4, (float)M / 4), ImVec2(ulim.x, vlim.x), ImVec2(ulim.y, vlim.y));
-		ImVec2 pos = ImGui::GetCursorScreenPos();
-		ImGui::TreePop();
-	};
-	ImGui::Text("Frame pointer [%p]", plm_image_ptr);
-	ImGui::Text("Frame index: [%d], Frame [%d]", frame_index, frame_order[frame_index % MAX_FRAMES]);
-	ImGui::SameLine();
-	if (ImGui::ArrowButton("##left", ImGuiDir_Left)) { frame_index--; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
-	ImGui::SameLine();
-	if (ImGui::ArrowButton("##right", ImGuiDir_Right)) { frame_index++; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
-
-	static int frame_index_i32 = 0;
-	frame_index_i32 = frame_index;
-	if (ImGui::SliderInt("Frame index", &frame_index_i32, 0, MAX_FRAMES - 1)) {
-		frame_index = clamp(frame_index_i32, 0, MAX_FRAMES - 1);
-	};
-
-	static std::vector<float> phase(N * M * 24);
-	static std::vector<unsigned char> hologram(4 * 2 * N * 2 * M);
-
-	if (bitpackDebugInit == false) {
-		for (auto n = 0; n < 24; n++) {
-			for (auto j = 0; j < M; j++) {
-				for (auto i = 0; i < N; i++) {
-					phase[i + j * N + n * N * M] = (float) i / (float) N;
-				}
-			};
-		};
-		bitpackDebugInit = true;
-	};	
-
-	if (ImGui::Button("Debug Bitpack")) {
-		using clock = std::chrono::high_resolution_clock;
-
-		// Time BitpackHolograms
-		auto start = clock::now();
-		auto result1 = BitpackHolograms(phase.data(), hologram.data(), N, M, 24);
-		auto end = clock::now();
-		auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		std::cout << "BitpackHolograms: " << result1 << " (time: "
-			<< duration1 << " microseconds)" << std::endl;
-
-		// Time InsertPLMFrame
-		start = clock::now();
-		auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
-		end = clock::now();
-		auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		std::cout << "InsertPLMFrame: " << result2 << " (time: "
-			<< duration2 << " microseconds)" << std::endl;
-
-		// Time SetPLMFrame
-		start = clock::now();
-		auto result3 = SetPLMFrame(0);
-		end = clock::now();
-		auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		std::cout << "SetPLMFrame: " << result3 << " (time: "
-			<< duration3 << " microseconds)" << std::endl;
+	static long long unsigned int ui_cycles = 0;
+	bool plm_updating_status = false;
+	
+	ui_cycles++;
+	if (ui_cycles % 60 == 0) {
+		ui_cycles = 0;
+		plm_updating_status = true;
 	}
 
-	if (ImGui::Button("Debug Bitpack GPU")) {
-		using clock = std::chrono::high_resolution_clock;
+	if (!show) return;
 
-		// Time BitpackHologramsGPU
-		auto start = clock::now();
-		auto result1 = BitpackAndInsertGPU(phase.data(), N, M, 24, 0);
-		auto end = clock::now();
-		auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		std::cout << "BitpackHologramsGPU: " << result1 << " (time: "
-			<< duration1 << " microseconds)" << std::endl;
+	ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
 
-		//// Time InsertPLMFrame
-		//start = clock::now();
-		//auto result2 = InsertPLMFrame(hologram.data(), 1, 0, 1);
-		//end = clock::now();
-		//auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		//std::cout << "InsertPLMFrame: " << result2 << " (time: "
-		//	<< duration2 << " microseconds)" << std::endl;
+	ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
 
-		//// Time SetPLMFrame
-		//start = clock::now();
-		//auto result3 = SetPLMFrame(0);
-		//end = clock::now();
-		//auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-		//std::cout << "SetPLMFrame: " << result3 << " (time: "
-		//	<< duration3 << " microseconds)" << std::endl;
-	};
 
-	ImGui::SeparatorText("GPU Resources Initialization");
-	ImGui::Text("Compute Shader"); ImGui::SameLine(); BitGreen(g_pComputeShader != nullptr, false);
-	ImGui::Text("Constant Buffer:"); ImGui::SameLine(); BitGreen(g_pConstantBuffer != nullptr, false);
-	ImGui::Text("Phase Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseBuffer != nullptr, false);
-	ImGui::Text("LUT Buffer:"); ImGui::SameLine(); BitGreen(g_pLUTBuffer != nullptr, false);
-	ImGui::Text("Phase Map Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseMapBuffer != nullptr, false);
-	ImGui::Text("Hologram Texture:"); ImGui::SameLine(); BitGreen(pHologramTexture != nullptr, false);
-	ImGui::Text("Hologram UAV:"); ImGui::SameLine(); BitGreen(g_pHologramUAV != nullptr, false);
-	ImGui::Text("Staging Texture:"); ImGui::SameLine(); BitGreen(pStagingTexture != nullptr, false);
+	ImGui::Begin("plmctrl");
 
-	ImGui::SeparatorText("LUT");
-	ImGui::PlotLines("LUT", phases, 17);
-	// Display phase_map
-	if (ImGui::TreeNode("Phase map [0...15]: ")) {
 
-		for (int j = 0; j < 4; j++) {
-			for (int i = 0; i < 16; i++) {
-				Bit(phase_map[i * 4 + j], i < 15);
-			};
+	if (ImGui::BeginTabBar("MyTabBar", tab_bar_flags))
+	{
+		if (ImGui::BeginTabItem("Main"))
+		{
+
+
+		ImGui::Text("Frametime %f ms (%f Hz)", 1000.0 * io.DeltaTime, io.Framerate);
+		ImGui::Text("Framerate needs to match PLM's");
+		ImGui::Text("Left: %d, Right: %d, Top: %d, Bottom: %d", monitorRect.left, monitorRect.right, monitorRect.top, monitorRect.bottom);
+
+
+	#ifndef INCLUDE_LIGHTCRAFTER_WRAPPERS
+		ImGui::SeparatorText("!! Warning !!");
+		ImGui::Text("- This version does not support commanding the PLM to Play/Stop the sequence display");
+		ImGui::Text("- To enable this feature, follow the Wiki entry on this topic");
+	#else
+		ImGui::SeparatorText("PLM Status");
+		if (PLM::IsConnected() == false) {
+			PLM::Open();
 		};
-		ImGui::TreePop();
-	};
+		Status(plm_connected);
+		if (ui_cycles % 60 == 0) { // Update the status every 60 frames
+			PLM::GetVersion();
+			plm_connected = PLM::IsConnected();
+		};
+		plm_connected = PLM::IsConnected();
+		ImGui::Text("%d.%d.%d", (PLM::App_ver >> 24), ((PLM::App_ver << 8) >> 24), ((PLM::App_ver << 16) >> 16));
+		ImGui::BeginDisabled(!plm_connected);
+		Status(plm_is_displaying);
+		if (ImGui::Button("Start")) {
+			PLM::Play();
+			plm_is_displaying = true;
+		};
+		ImGui::SameLine();
+		if (ImGui::Button("Stop")) {
+			PLM::Stop();
+			plm_is_displaying = false;
+		};
+		ImGui::EndDisabled();
+	#endif
 
-	ImGui::SeparatorText("Stats");
-	ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
-	ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
-	ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
+
+		//Status(first_frame_trigger);
+		ImGui::SeparatorText("Sequence");
+		ImGui::Text("Frames to play: %d/%d", frames_to_play, frames_in_sequence);
+		ImGui::Text("Buffer Index %d/%d", 24 * buffer_index, 24 * frames_in_sequence);
+
+		ImGui::Text("Frame order:");
+		ImGui::SameLine();
+		ImGui::Text("[");
+		ImGui::SameLine();
+		for (int i = 0; i < (MAX_FRAMES <= 4 ? (MAX_FRAMES - 1) : 4); ++i) {
+			ImGui::Text("%llu", frame_order[i]);
+			ImGui::SameLine();
+		};
+		ImGui::Text("... %llu], total: %d", frame_order[MAX_FRAMES - 1], MAX_FRAMES);
+
+		ImGui::SeparatorText("Frame Data");
+		if (ImGui::TreeNode("Frame on display")) {
+			static ImVec2 ulim = ImVec2(0.0f, 1.0f);
+			static ImVec2 vlim = ImVec2(0.0f, 1.0f);
+			ImGui::Image((void*)data_texture_srv, ImVec2((float)N / 4, (float)M / 4), ImVec2(ulim.x, vlim.x), ImVec2(ulim.y, vlim.y));
+			ImVec2 pos = ImGui::GetCursorScreenPos();
+			ImGui::TreePop();
+		};
+		ImGui::Text("Frame pointer [%p]", plm_image_ptr);
+		ImGui::Text("Frame index: [%d], Frame [%d]", frame_index, frame_order[frame_index % MAX_FRAMES]);
+		ImGui::SameLine();
+		if (ImGui::ArrowButton("##left", ImGuiDir_Left)) { frame_index--; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
+		ImGui::SameLine();
+		if (ImGui::ArrowButton("##right", ImGuiDir_Right)) { frame_index++; frame_index = clamp(frame_index, 0, MAX_FRAMES - 1); }
+
+		static int frame_index_i32 = 0;
+		frame_index_i32 = frame_index;
+		if (ImGui::SliderInt("Frame index", &frame_index_i32, 0, MAX_FRAMES - 1)) {
+			frame_index = clamp(frame_index_i32, 0, MAX_FRAMES - 1);
+		};
+
+		static std::vector<float> phase(N * M * 24);
+		static std::vector<unsigned char> hologram(4 * 2 * N * 2 * M);
+
+		if (bitpackDebugInit == false) {
+			for (auto n = 0; n < 24; n++) {
+				for (auto j = 0; j < M; j++) {
+					for (auto i = 0; i < N; i++) {
+						phase[i + j * N + n * N * M] = (float) i / (float) N;
+					}
+				};
+			};
+			bitpackDebugInit = true;
+		};	
+
+		ImGui::SeparatorText("GPU Resources Initialization");
+		ImGui::Text("Compute Shader"); ImGui::SameLine(); BitGreen(g_pComputeShader != nullptr, false);
+		ImGui::Text("Constant Buffer:"); ImGui::SameLine(); BitGreen(g_pConstantBuffer != nullptr, false);
+		ImGui::Text("Phase Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseBuffer != nullptr, false);
+		ImGui::Text("LUT Buffer:"); ImGui::SameLine(); BitGreen(g_pLUTBuffer != nullptr, false);
+		ImGui::Text("Phase Map Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseMapBuffer != nullptr, false);
+		ImGui::Text("Hologram Texture:"); ImGui::SameLine(); BitGreen(pHologramTexture != nullptr, false);
+		ImGui::Text("Hologram UAV:"); ImGui::SameLine(); BitGreen(g_pHologramUAV != nullptr, false);
+		ImGui::Text("Staging Texture:"); ImGui::SameLine(); BitGreen(pStagingTexture != nullptr, false);
+
+		ImGui::SeparatorText("LUT");
+		ImGui::PlotLines("LUT", phases, 17);
+		// Display phase_map
+		if (ImGui::TreeNode("Phase map [0...15]: ")) {
+
+			for (int j = 0; j < 4; j++) {
+				for (int i = 0; i < 16; i++) {
+					Bit(phase_map[i * 4 + j], i < 15);
+				};
+			};
+			ImGui::TreePop();
+		};
+
+		ImGui::SeparatorText("Stats");
+		ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
+		ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
+		ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
+
+		ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("PLM connection"))
+		{
+
+			ImGui::SeparatorText("PLM Status");
+			if (PLM::IsConnected() == false) {
+				PLM::Open();
+				PLM::GetVersion();
+			};
+			Status(plm_connected);
+			plm_connected = PLM::IsConnected();
+			ImGui::SameLine();
+			if (plm_connected) {
+				ImGui::Text("Connected");
+			} else {
+				ImGui::Text("Not connected");
+			};
+			ImGui::Text("Firmware version: %d.%d.%d", (PLM::App_ver >> 24), ((PLM::App_ver << 8) >> 24), ((PLM::App_ver << 16) >> 16));
+			if ((PLM::App_ver >> 24) == 0 && ((PLM::App_ver << 8) >> 24) == 0 && ((PLM::App_ver << 16) >> 16) == 0) {
+				if (plm_connected) {
+					ImGui::Text("PLM is connected, but TI's LightCrafter might be open");
+				}
+			};
+
+			ImGui::BeginDisabled(!plm_connected);
+
+
+			if (ImGui::TreeNode("PLM State")) {
+
+				static unsigned char HWStatus = 0, SysStatus = 0, MainStatus = 0;
+				static bool plm_status_success = true;
+
+				if (plm_updating_status) {
+					// Get the status of the PLM
+					if (LCR_GetStatus(&HWStatus, &SysStatus, &MainStatus) < 0) {
+						plm_status_success = false;
+					} else {
+						plm_status_success = true;
+					}
+				};
+
+				ContinuousStatus((float)ui_cycles / 60.0, true);
+				if (plm_status_success) ImGui::Text("Monitoring PLM status"); else ImGui::Text("Unable to get PLM status");
+
+
+				// 1. Internal Memory Test Passed
+				bool memTest = SysStatus & (1 << 0);
+				Status(memTest);
+				ImGui::Text("Internal Memory Test Passed: %s", memTest ? "Yes" : "No");
+
+				// 2. Internal Initialization Complete
+				bool initComplete = HWStatus & (1 << 0);
+				Status(initComplete);
+				ImGui::Text("Internal Initialization Complete: %s", initComplete ? "Yes" : "No");
+
+				// 3. Controller/DMD Incompatible
+				bool compatible = !(HWStatus & (1 << 1));
+				Status(compatible);
+				ImGui::Text("Controller/DMD Incompatible: %s", compatible ? "No" : "Yes");
+
+				// 4. Secondary Present and Ready
+				bool slaveReady = HWStatus & (1 << 4);
+				Status(slaveReady);
+				ImGui::Text("Secondary Present and Ready: %s", slaveReady ? "Yes" : "No");
+
+				// 5. DMD Reset Waveform Controller Error
+				bool dmdResetOk = !(HWStatus & (1 << 2));
+				Status(dmdResetOk);
+				ImGui::Text("DMD Reset Waveform Controller Error: %s", dmdResetOk ? "No" : "Yes");
+
+				// 6. Forced Swap Error
+				bool forcedSwapOk = !(HWStatus & (1 << 3));
+				Status(forcedSwapOk);
+				ImGui::Text("Forced Swap Error: %s", forcedSwapOk ? "No" : "Yes");
+
+				// 7. Sequencer Abort Status Flag Error
+				bool seqAbortOk = !(HWStatus & (1 << 6));
+				Status(seqAbortOk);
+				ImGui::Text("Sequencer Abort Status Flag Error: %s", seqAbortOk ? "No" : "Yes");
+
+				// 8. Sequencer Error
+				bool seqErrorOk = !(HWStatus & (1 << 7));
+				Status(seqErrorOk);
+				ImGui::Text("Sequencer Error: %s", seqErrorOk ? "No" : "Yes");
+
+				// 9. DMD Micromirrors Parked
+				bool dmdParked = MainStatus & (1 << 0);
+				Status(dmdParked);
+				ImGui::Text("DMD Micromirrors Parked: %s", dmdParked ? "Yes" : "No");
+
+				// 10. Sequencer Running
+				bool seqRunning = MainStatus & (1 << 1);
+				Status(seqRunning);
+				ImGui::Text("Sequencer Running: %s", seqRunning ? "Yes" : "No");
+
+				// 11. Video Running
+				bool videoRunning = !(MainStatus & (1 << 2));
+				Status(videoRunning);
+				ImGui::Text("Video Running: %s", videoRunning ? "Yes" : "No");
+
+				// 12. Locked to External Source
+				bool extLocked = MainStatus & (1 << 3);
+				Status(extLocked);
+				ImGui::Text("Locked to External Source: %s", extLocked ? "Yes" : "No");
+				ImGui::TreePop();
+			};
+
+			//ImGui::SeparatorText("Quick actions");
+			//ImGui::Button("Set everything for HDMI connection");
+
+			ImGui::SeparatorText("Connection tests");
+
+			// Get source
+			static unsigned int source = 99, portWidth = 99;
+			static bool source_problem = 0;
+			if (ImGui::Button("Check Source")) {
+				source_problem = LCR_GetInputSource(&source, &portWidth) < 0 ? true : false;
+			};
+			if (source_problem) ImGui::Text("Unable to get Input Source");
+			ImGui::SameLine();
+			Status(source == 0); ImGui::Text("Parallel RGB");
+			ImGui::SameLine();
+			Status(portWidth == 1); ImGui::Text("Port Width: %d", portWidth);
+
+			ImGui::Separator();
+			static unsigned int port = 0, swap = 99;
+			static bool swap_problem = false;
+			if (ImGui::Button("Check Port Swap")) {
+				swap_problem = LCR_GetDataChannelSwap(port, &swap) < 0 ? true : false;
+			};
+			if (swap_problem) ImGui::Text("Unable to get Channel Swap Info");
+			ImGui::SameLine();
+			ImGui::Text("Port: %d, Swap: %d", port, swap);
+			ImGui::Separator();
+
+
+			static API_VideoConnector_t powerMode;
+			if (ImGui::Button("Check Conn")) {
+				if (LCR_GetIT6535PowerMode(&powerMode) < 0) {};
+			}; 
+			ImGui::SameLine();
+			Status(powerMode == VIDEO_CON_DISABLE); ImGui::Text("Power down"); ImGui::SameLine();
+			Status(powerMode == VIDEO_CON_HDMI); ImGui::Text("HDMI"); ImGui::SameLine();
+			Status(powerMode == VIDEO_CON_DP); ImGui::Text("DisplayPort");
+			ImGui::Separator();
+
+
+			static API_DisplayMode_t SLmode = PTN_MODE_DISABLE;
+			if (ImGui::Button("Check Video Mode")) {
+				if (LCR_GetMode(&SLmode) == 0) {};
+			};
+			Status(SLmode == PTN_MODE_DISABLE); ImGui::Text("Disable Pattern Mode"); 
+			Status(SLmode == PTN_MODE_SPLASH); ImGui::Text("Pre-stored Pattern Mode"); 
+			Status(SLmode == PTN_MODE_VIDEO); ImGui::Text("Video Pattern Mode"); 
+			Status(SLmode == PTN_MODE_OTF); ImGui::Text("Pattern On-The-Fly"); 
+
+
+			ImGui::SeparatorText("Sequence controls");
+			Status(plm_is_displaying);
+			if (ImGui::Button("Start")) {
+				PLM::Play();
+				plm_is_displaying = true;
+			};
+			ImGui::SameLine();
+			if (ImGui::Button("Stop")) {
+				PLM::Stop();
+				plm_is_displaying = false;
+			};
+
+			ImGui::EndDisabled();
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
+	}
 
 	ImGui::End();
 
 };
 
+
+
 #ifdef PLM_DEBUG
 int main() {
 
+	SetPLMWindowPos(1358, 800, 1920);
+	SetWindowed(true);
 	StartUI(MAX_FRAMES);
 
 	return 0;
 }
 #endif
+

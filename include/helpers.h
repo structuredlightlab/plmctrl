@@ -83,3 +83,19 @@ void BitGreen(bool indicator, bool same_line = false) {
 	ImGui::Text(" ");
 	if (same_line) ImGui::SameLine();
 }
+
+void ContinuousStatus(float indicator, bool same_line = true) {
+	const ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoPicker |
+		ImGuiColorEditFlags_NoOptions |
+		ImGuiColorEditFlags_NoInputs |
+		ImGuiColorEditFlags_NoTooltip |
+		ImGuiColorEditFlags_NoLabel |
+		ImGuiColorEditFlags_NoSidePreview |
+		ImGuiColorEditFlags_NoDragDrop;
+	float blue[3] = { 0.0f, 0.0f, indicator };
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::ColorEdit3("status##", blue, flags);
+	//ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + 2), ImVec2(pos.x + 10, pos.y + 12), indicator ? green : red);
+	//ImGui::Text(" ");
+	if (same_line) ImGui::SameLine();
+};

@@ -1,9 +1,9 @@
-# <img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl — Updated on 20/May/2025 (full-control-dev branch)
 
+<img src="https://github.com/user-attachments/assets/92c3cc2b-c4f1-4ed0-b876-7b01cac2bc67" alt="logo" width="24"/> PLMCtrl — Updated on 20/May/2025
 ![Warning](https://img.shields.io/badge/under%20development%20-yellow)
 [![arXiv](https://img.shields.io/badge/arXiv-2409.01289-green.svg)](https://arxiv.org/abs/2409.01289)
 [![Journal](https://img.shields.io/badge/Optics-Express-green.svg)](https://opg.optica.org/oe/fulltext.cfm?uri=oe-32-24-43300&id=563432)
-![Warning](https://img.shields.io/badge/version-0.1.2a-red)
+![Warning](https://img.shields.io/badge/version-0.5.0b-red)
 <div style="display: flex; align-items: center;">
     <div>
         <p align="center">
@@ -15,7 +15,8 @@
         <p align="center">
             <a href="https://github.com/structuredlightlab/plmctrl/wiki/Known-issues">⚠️Known issues</a> · 
             <a href="https://github.com/structuredlightlab/plmctrl/wiki/Experiment">🧪Experiment</a> · 
-            <a href="https://github.com/structuredlightlab/plmctrl/wiki/LightCrafterDLP900-configuration">⚙️LightCrafterDLP900 configuration</a> ·  
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/Configuring-the-PLM-using-plmctrl">⚙️Configuring the PLM using this library</a> ·  
+            <a href="https://github.com/structuredlightlab/plmctrl/wiki/LightCrafterDLP900-configuration">⚙️Configuring using LightCrafterDLP900</a> ·  
             <a href="https://github.com/structuredlightlab/plmctrl?tab=readme-ov-file#contact"> 📧Contact </a>
         </p>
     </div>
@@ -59,8 +60,15 @@ x0 = 1920; y0 = 0; (Indicates where your PLM virtual monitor is relative to your
 % Create a PLMController instance
 plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 
+
 % Setup the PLM
 plm.StartUI(1);  % First monitor = 1 
+
+
+% Configure the PLM (Run only once per boot sequence)
+Continuous = 1;
+HDMI = 1;
+plm.Configure(Continuous, HDMI);
 
 % ---- Stuff ---- 
 [x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
