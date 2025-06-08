@@ -9,8 +9,7 @@
 
 struct BitElement
 {
-	enum Color
-	{
+	enum Color{
 		RED = 1,
 		GREEN = 2,
 		BLUE = 4,
@@ -406,6 +405,7 @@ namespace PLM {
 		//end = std::chrono::high_resolution_clock::now();
 		//std::chrono::duration<double> elapsed = end - start;
 		//std::cout << "Elapsed time: " << std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count() << " us" << std::endl;
+
 		static ImVec2 ulim = ImVec2(0.0f, 1.0f);
 		static ImVec2 vlim = ImVec2(0.0f, 1.0f);
 
@@ -421,34 +421,3 @@ namespace PLM {
 
 }
 
-
-
-
-
-
-
-
-//int GetConnectionType() {
-
-//	ConnectionType connectionType;
-
-//	if (LCR_GetIT6535PowerMode(&connectionType) < 0) {
-//		std::cout << "Error: Unable to get IT6535 power mode" << std::endl;
-//		return -1;
-//	};
-
-//	if (connectionType == VIDEO_DISABLED) {
-//		std::cout << "No video connection" << std::endl;
-//		return 0;
-//	};
-
-//	if (connectionType == VIDEO_HDMI) {
-//		std::cout << "HDMI connection" << std::endl;
-//		return 1;
-//	};
-
-//	if (connectionType == VIDEO_DP) {
-//		std::cout << "DisplayPort connection" << std::endl;
-//		return 2;
-//	}
-//};

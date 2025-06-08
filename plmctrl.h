@@ -17,7 +17,7 @@ extern "C" {
 	PLM_API bool ResumeUI();
 	PLM_API bool StartSequence(int number_of_frames);
 	PLM_API bool SetPhaseMap(int* new_phase_map);
-	PLM_API void SetPLMWindowPos(int width, int height, int monitor, int x0, int y0);
+	PLM_API void SetPLMWindowPos(int width, int height, int x0, int y0);
 	PLM_API void SetWindowed(bool windowed_mode);
 	PLM_API bool BitpackHolograms(
 		float* phase,
@@ -54,8 +54,6 @@ extern "C" {
 	PLM_API int UpdateLUT(int play_mode, int connection_type);
 	PLM_API int GetVideoPatternMode();
 	PLM_API int GetConnectionType();
-
-
 	PLM_API int Play();
 	PLM_API int Stop();
 	PLM_API int Open();

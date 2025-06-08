@@ -80,11 +80,9 @@ plm.Configure = @Configure;
     end
 
 % Function to setup the PLM window on a specified monitor
-    function StartUI(monitor_id)
+    function StartUI()
         % Validate that the monitor ID is a positive integer
-        validateattributes(monitor_id, {'numeric'}, {'scalar', 'positive', 'integer'});
-
-        calllib('plmctrl', 'SetPLMWindowPos', plm.N, plm.M, monitor_id, plm.x0, plm.y0);
+        calllib('plmctrl', 'SetPLMWindowPos', plm.N, plm.M, plm.x0, plm.y0);
         calllib('plmctrl', 'StartUI', plm.MAX_FRAMES);
     end
 

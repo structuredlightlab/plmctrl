@@ -1,8 +1,8 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Structured Light Lab
- * Version: 0.5.0 beta
- * Date: 18/Mar/2025
+ * Version: 0.6.0 beta
+ * Date: 8/Jun/2025
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
@@ -26,6 +26,7 @@
 
  *
  * External Dependencies:
+ * - DirectX 11: Graphics API for rendering
  * - Dear ImGui: GUI handling and graphics API wrapping
  * - hidapi: USB communication with the PLM
  */
@@ -684,7 +685,6 @@ int UI(){
 		// PLM frame window
 		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, pSamplerState, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
 
-		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
 
 		DebugWindow(show_debug_window, io);
 
@@ -819,18 +819,13 @@ void SetWindowed(bool windowed_mode) {
 	windowed = windowed_mode;
 };
 
-void SetPLMWindowPos(int width, int height, int monitor, int x0 = 2560, int y0 = 0 ) {
+void SetPLMWindowPos(int width, int height, int x0 = 0, int y0 = 0 ) {
 	N = width;
 	M = height;
-	monitor_id = monitor;
 	window_x0 = x0;
 	window_y0 = y0;
 };
 
-//void SetPLMWindowXY(int x0, int y0) {
-//	window_x0 = x0;
-//	window_y0 = y0;
-//};
 
 void SetLookupTable(float* lut) {
 	for (int i = 0; i < 17; i++) {
@@ -1251,6 +1246,8 @@ void DebugWindow(
 	if (!show) return;
 
 	ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
+
+	ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
 
 
 	ImGui::Begin("plmctrl");

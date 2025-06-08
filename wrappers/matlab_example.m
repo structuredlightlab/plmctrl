@@ -1,6 +1,8 @@
 % Written by J. C. A. Rocha
-% Date: 20/May/2025
+% Date: 8/Jun/2025
 % Queries: jd964@exeter.ac.uk
+
+% Run this code section by section.
 
 clearvars;
 
@@ -15,18 +17,20 @@ N = 1358;
 M = 800;
 
 % This is the offset to the PLM virtual monitor. (0, 0) is the top left corner of your main screen. 
-% The example below ( x0 = 1920, y0 = 0 ) is for the PLM monitor to be on the right of the main 1080p screen.
-x0 = 1920;
+% The example below ( x0 = 2560, y0 = 0 ) is for the PLM monitor to be on the right of the main QHD screen.
+x0 = 2560;
 y0 = 0;
 
 plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 
-plm.Open();
+plm.Open(); % This opens USB comms with the PLM, after this command, you can call certain functions that changes a few PLM settings.
 
-monitorId = 1; % This parameter is not currently working.
 plm.SetWindowedMode(true); % Only for debug purposes -- Suggested if you're testing how this library work
 
 %% Configure the PLM for HDMI
+% You should configure the PLM only once per boot. You should also run it
+% section by section. Some wait period is necessary between commands.
+
 HDMI = 1;
 DisplayPort = 2;
 
@@ -53,7 +57,9 @@ plm.UpdateLUT(play_mode, connection_type)
 %% Start the UI
 % If you're using DisplayPort, you have to configure the PLM before
 % starting the UI, but if using HDMI, you can do it before.
-plm.StartUI(monitorId);
+plm.StartUI();
+
+plm.Play(); % PLM will start reading from the screen continuously (or once, depending on your play_mode)
 %% Modify the Look-Up Table (LUT)
 % By default, it is set to TI's LUT (Texas Instruments)
 % phase_levels = single([0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1]);
@@ -61,7 +67,7 @@ phase_levels = single([0.004, 0.017, 0.036, 0.058, 0.085, 0.117, 0.157, 0.217, 0
 % phase_levels = single(linspace(0,1,17)); % linear LUT
 plm.SetLookupTable(phase_levels);
 
-%% Set phase_map
+% Set phase_map
 % Define phase map
 phase_map = [
     0 0 0 0;
@@ -82,7 +88,6 @@ phase_map = [
     1 1 1 1;
 ];
 
-% phase_map = phase_map(randperm(16),:);
 order = [14, 1, 10, 6, 2, 15, 11, 7, 3, 16, 12, 8, 4, 13, 9, 5];
 phase_map = phase_map(order,:);
 
@@ -97,7 +102,7 @@ phaseTest(N/4+1:end, M/4+1:end, :) = 0.6*rand();
 
 frame = plm.BitpackHologramsGPU(phaseTest);
 offset = 0;
-format = 1;
+format = 1; % 0 = RGB frame, 1 = RGBA frame. BitpackHologramsGPU outputs an RGBA frame.
 plm.InsertFrames(frame, offset, format);
 plm.SetFrame(offset);
 

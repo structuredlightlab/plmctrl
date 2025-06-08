@@ -3,7 +3,7 @@ import numpy as np
 import time
 
 class PLMController:
-    def __init__(self, MAX_FRAMES, width, height, dll_path='plmctrl.dll', x0 = 1920, y0 = 0 ):
+    def __init__(self, MAX_FRAMES:int, width:int, height:int, dll_path='plmctrl.dll', x0:int = 1920, y0:int = 0 ):
         """
         Initialize the PLMController.
 
@@ -25,7 +25,7 @@ class PLMController:
         self.lib = ctypes.CDLL(dll_path)
         
         # Define function prototypes with argtypes and restype
-        self.lib.SetPLMWindowPos.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self.lib.SetPLMWindowPos.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.lib.StartUI.argtypes = [ctypes.c_int]
         self.lib.InsertPLMFrame.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.lib.InsertPLMFrame.restype = ctypes.c_int
@@ -89,12 +89,9 @@ class PLMController:
             raise RuntimeError("Failed to stop the sequence display")
         return res
 
-    def start_ui(self, monitor_id):
-        """Setup the PLM window on a specified monitor."""
-        if not isinstance(monitor_id, int) or monitor_id <= 0:
-            raise ValueError("monitor_id must be a positive integer")
-        
-        self.lib.SetPLMWindowPos(self.N, self.M, monitor_id, self.x0, self.y0)
+    def start_ui(self):
+        """Setup the PLM window on specified coordinates."""
+        self.lib.SetPLMWindowPos(self.N, self.M, self.x0, self.y0)
         self.lib.StartUI(self.MAX_FRAMES)
         
     def set_windowed(self, windowed):
