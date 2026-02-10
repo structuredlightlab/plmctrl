@@ -1,8 +1,8 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Structured Light Lab
- * Version: 0.6.0 beta
- * Date: 8/Jun/2025
+ * Version: 0.7.0 beta
+ * Date: 10/Feb/2025
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
@@ -38,6 +38,8 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
 #include "imgui/imgui_impl_dx11.h"
+#include "imgui/implot.h"
+
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <tchar.h>
@@ -103,7 +105,7 @@ std::mutex mutex;
 std::mutex plm_image_mutex;
 std::mutex plm_reading_status;
 
-int N = 200, M = 200, monitor_id = 0;
+int N = 100, M = 100, monitor_id = 0;
 
 int window_x0 = 0, window_y0 = 0;
 int delay = 200;
@@ -147,6 +149,9 @@ std::chrono::duration<double> elapsed_total;
 
 uint64_t MAX_FRAMES = 64;
 bool windowed = false;
+
+std::vector<float> blazed; bool monitoring_lut = false;
+std::vector<unsigned char> blazed_frame;
 std::vector<unsigned char> frame;
 std::vector<uint8_t> frame_set;
 std::vector<uint64_t> frame_order;
@@ -154,7 +159,9 @@ std::vector<uint64_t> frame_order;
 std::mutex dx_mutex;
 
 // TI's default lookup-table
+float phases_TI[17] = { 0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1.0 };
 float phases[17] = { 0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1.0 };
+
 
 // Binary counting phase-map, has to be calibrated.
 int phase_map[] = {
@@ -446,6 +453,25 @@ bool StartSequence(int number_of_frames) {
 	return true;
 }
 
+bool SetLUTBlazed(float *in){
+	// Sets up the blazed grating (from 0 to 1) to be used for calibrating the LUT curve using a Bezier curve.
+	// The Bezier curve will set the LUT to be used for bitpacking.
+	// Takes a single page (N*M) and replicates it across all 24 pages
+	if (blazed.size() != 24 * N * M) {
+		blazed.resize(24 * N * M);
+	}
+	
+	for (int page = 0; page < 24; page++) {
+		std::copy(in, in + N * M, blazed.begin() + page * N * M);
+	}
+	
+	return true;
+}
+
+bool SetLUTControl(bool monitor) {
+	return true;
+}
+
 
 
 bool StartDisplaying() {
@@ -511,6 +537,8 @@ int UI(){
 	// Setup Dear ImGui context
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
+	ImPlot::CreateContext();
+
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
 	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewport / Platform Windows
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
@@ -748,6 +776,7 @@ int UI(){
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImGui::DestroyContext();
+	ImPlot::DestroyContext();
 
 	CleanupDeviceD3D();
 	::DestroyWindow(hwnd);
@@ -779,6 +808,8 @@ void StartUI(unsigned int number_of_frames) {
 	running = true;
 	plm_image_ptr = nullptr;
 
+	blazed.resize(24 * N * M);
+	blazed_frame.resize(4 * (2 * N) * (2 * M));
 	frame.resize(4 * (2 * N) * (2 * M));
 	frame_set.resize(4 * (2 * N) * (2 * M) * MAX_FRAMES);
 	std::fill(frame_set.begin(), frame_set.end(), 255);
@@ -831,6 +862,27 @@ void SetLookupTable(float* lut) {
 	for (int i = 0; i < 17; i++) {
 		phases[i] = lut[i];
 	}
+}
+
+void GetPhases(float* out) {
+	for (int i = 0; i < 17; i++) {
+		out[i] = phases[i];
+	}
+}
+
+void GetBezierControlPoints(float* out_x, float* out_y) {
+	for (int i = 0; i < 6; i++) {
+		out_x[i] = (float)PLM::Bezier::P[i].x;
+		out_y[i] = (float)PLM::Bezier::P[i].y;
+	}
+}
+
+void SetBezierControlPoints(float* in_x, float* in_y) {
+	for (int i = 0; i < 6; i++) {
+		PLM::Bezier::P[i].x = in_x[i];
+		PLM::Bezier::P[i].y = in_y[i];
+	}
+	PLM::Bezier::has_changed_lut = true;
 }
 
 bool SetPhaseMap(int* new_phase_map) {
@@ -1356,7 +1408,68 @@ void DebugWindow(
 		ImGui::Text("Staging Texture:"); ImGui::SameLine(); BitGreen(pStagingTexture != nullptr, false);
 
 		ImGui::SeparatorText("LUT");
-		ImGui::PlotLines("LUT", phases, 17);
+		if (ImGui::TreeNode("Controls")) {
+			static bool use_custom_lut = false;
+			bool lut_changed = false;
+			if (ImGui::Checkbox("Use custom LUT", &use_custom_lut)) {
+				if (!use_custom_lut) {
+					// Switch back to TI default
+					std::copy(std::begin(phases_TI), std::end(phases_TI), phases);
+					lut_changed = true;
+				} else {
+					// Switched to custom LUT - derive from Bezier
+					lut_changed = true;
+				}
+			}
+			
+			if (!use_custom_lut) {
+				ImGui::TextDisabled("(Using TI default LUT - enable checkbox to edit)");
+			}
+			
+			ImGui::BeginDisabled(!use_custom_lut);
+			if (PLM::Bezier::Controls()) {
+				lut_changed = true;
+			}
+			
+			if (use_custom_lut && lut_changed) {
+				// Derive phases[17] from the Bezier LUT
+				// x = normalized phase, y = quantized level (0/15 to 15/15)
+				// phases[k] = midpoint of the x-range where output is at level k
+				
+				float boundaries[17]; // boundary[k] = x where level k first appears
+				boundaries[0] = 0.0f;
+				int current_level = 0;
+				for (int i = 0; i < PLM::Bezier::num_points; i++) {
+					int level = (int)round(PLM::Bezier::LUTj[i] * 15.0);
+					if (level > current_level) {
+						for (int k = current_level + 1; k <= level && k < 17; k++) {
+							boundaries[k] = (float)PLM::Bezier::LUTi[i];
+						}
+						current_level = level;
+					}
+				}
+
+				float upper_boundary = 1.0f;
+				
+				for (int k = 0; k < 16; k++) {
+					phases[k] = (boundaries[k] + boundaries[k + 1]) * 0.5f;
+				}
+				phases[16] = (boundaries[16] + upper_boundary) * 0.5f;
+			}
+			
+			if (lut_changed) {
+				std::fill(blazed_frame.begin(), blazed_frame.end(), 0);
+				UI_is_rendering.store(false);
+				BitpackHologramsGPU(blazed.data(), blazed_frame.data(), N, M, 24);
+				UI_is_rendering.store(true);
+				InsertPLMFrame(blazed_frame.data(), 1, MAX_FRAMES - 1, 1);
+				SetPLMFrame(MAX_FRAMES - 1);
+			}
+			
+			ImGui::EndDisabled();
+			ImGui::TreePop();
+		}
+		//ImGui::PlotLines("LUT", phases, 17);
 		// Display phase_map
 		if (ImGui::TreeNode("Phase map [0...15]: ")) {
 
@@ -1558,9 +1671,30 @@ void DebugWindow(
 #ifdef PLM_DEBUG
 int main() {
 
-	SetPLMWindowPos(1358, 800, 1920);
+	SetPLMWindowPos(N, M, 2560+200);
 	SetWindowed(true);
+	
+	// Create hardcoded blazed grating for testing
+	std::vector<float> blazed_grating(N * M);
+	const int num_periods = 1;  // Number of grating periods across width
+	
+	for (int y = 0; y < M; y++) {
+		for (int x = 0; x < N; x++) {
+			// Create repeating sawtooth pattern (blazed grating)
+			float normalized_x = static_cast<float>(x) / static_cast<float>(N);
+			float phase = fmod(normalized_x * num_periods, 1.0f);  // Sawtooth: 0->1 repeating
+			blazed_grating[y * N + x] = phase;
+		}
+	}
+	SetLUTBlazed(blazed_grating.data());
+	
 	StartUI(MAX_FRAMES);
+
+
+	//std::fill(blazed_frame.begin(), blazed_frame.end(), 0);
+	//BitpackHolograms(blazed.data(), blazed_frame.data(), N, M, 24);
+	//InsertPLMFrame(blazed_frame.data(), 1, MAX_FRAMES - 1, 1);
+	//SetPLMFrame(MAX_FRAMES - 1);
 
 	return 0;
 }

@@ -3,8 +3,11 @@
 #define INCLUDE_LIGHTCRAFTER_WRAPPERS
 
 #ifdef INCLUDE_LIGHTCRAFTER_WRAPPERS
+
 #include <PLM/API.h>
 #include "PLM/usb.h"
+
+#define clamp(x, min, max) (x < min ? min : (x > max ? max : x))
 
 
 struct BitElement
@@ -342,6 +345,10 @@ namespace PLM {
 	}
 #endif
 
+
+
+
+
 using timepoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
 timepoint start;
 timepoint end;
@@ -396,7 +403,7 @@ namespace PLM {
 			// Copy each row, taking into account the pitch
 			memcpy(dest + row * mapped_resource.RowPitch,
 				src + row * N * 4 * sizeof(uint8_t),
-				(uint64_t) N * 4 * sizeof(uint8_t));
+				(uint64_t)N * 4 * sizeof(uint8_t));
 		}
 
 		g_pd3dDeviceContext->Unmap(pTexture, 0);
@@ -419,5 +426,173 @@ namespace PLM {
 		ImGui::End();
 	}
 
+
+	namespace Bezier {
+
+		enum LUT_TYPE {
+			LUT_TI = 0,
+			LUT_BEZIER = 1,
+			LUT_BINARY = 2
+		};
+
+
+		double lerp(double t, double a, double b) {
+			return (1 - t) * a + t * b;
+		};
+
+		ImPlotPoint bezier(double t, ImPlotPoint* P) {
+			ImPlotPoint Q[] = { P[0], P[1], P[2], P[3], P[4], P[5] };
+			int n = 6;
+			ImPlotPoint B;
+			for (int i = n - 2; i >= 0; i--) { // 4, 3, 2, 1, 0
+				for (int j = 0; j <= i; j++) { // {0, 1, 2, 3, 4}, {0, 1, 2, 3}, {0, 1, 2}, {0, 1}, {0}
+					Q[j].y = lerp(t, Q[j].y, Q[j + 1].y);
+				}
+			}
+			Q[0].x = lerp(t, P[0].x, P[5].x);
+			return Q[0];
+		};
+
+
+		const int num_points = 512;
+
+		LUT_TYPE lut_type = LUT_BEZIER;
+
+		bool has_changed_lut = true;
+		// This is good for the lowest Mirror Bias level tested so far (level 10/255)
+		//ImPlotPoint P[] = { ImPlotPoint(0.0f,0.0f), ImPlotPoint(0.2f,0.8242f), ImPlotPoint(0.4f,0.3073f), ImPlotPoint(0.6f,0.9116f), ImPlotPoint(0.8f,0.771f),ImPlotPoint(1.0f,1.0f) }; // PLM 1 Curve
+		ImPlotPoint P[] = { ImPlotPoint(0.0f,0.0f), ImPlotPoint(0.2f,0.1f), ImPlotPoint(0.4f,0.035f), ImPlotPoint(0.6f,0.485f), ImPlotPoint(0.8f,0.3867f),ImPlotPoint(1.0f,1.0f) };
+
+		ImPlotPoint P_binary[] = { ImPlotPoint(0.25f,0.0f) , ImPlotPoint(0.75f,1.0f) };
+
+
+		std::vector<double> LUTi(num_points, 0.0);
+		std::vector<double> LUTj(num_points, 0.0);
+		ImPlotPoint LUT[num_points];
+
+		std::vector<float> LUT_control_points_x = { 0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f };
+		std::vector<float> LUT_control_points_y = { 0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f };
+
+		//float phase_level[] = { 0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1 };
+		//     0.0148 0.0285 0.0450 0.0924 0.1558 0.2719 0.3001 0.3546 0.4244 0.5187 0.5828 0.7195 0.8603 0.9722 0.9818 0.9940
+		float phase_level[] = { 0.0, 0.0148, 0.0285, 0.0450, 0.0924, 0.1558, 0.2719, 0.3001, 0.3546, 0.4244, 0.5187, 0.5828, 0.7195, 0.8603, 0.9722, 0.9818, 1.0 };
+		int num_levels = 16;
+		ImVec4 plot_color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+
+
+		bool Controls() {
+			has_changed_lut = false;
+			static ImPlotDragToolFlags flags = ImPlotDragToolFlags_None;
+			//ImGui::CheckboxFlags("NoCursors", (unsigned int*)&flags, ImPlotDragToolFlags_NoCursors); ImGui::SameLine();
+			//ImGui::CheckboxFlags("NoFit", (unsigned int*)&flags, ImPlotDragToolFlags_NoFit); ImGui::SameLine();
+			//ImGui::CheckboxFlags("NoInput", (unsigned int*)&flags, ImPlotDragToolFlags_NoInputs);
+			//if (ImGui::Combo("LUT Type", (int*)&lut_type, "TI\0Bezier\0\0")) {
+			//	has_changed_lut = true;
+			//};
+			lut_type = LUT_BEZIER;
+
+			//ImPlotAxisFlags ax_flags = ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoTickMarks;
+			ImPlotAxisFlags ax_flags = ImPlotFlags_None;
+			bool clicked[6] = { false, false, false, false, false, false };
+			bool hovered[6] = { false, false, false, false, false, false };
+			bool held[6] = { false, false, false, false, false, false };
+
+			if (ImPlot::BeginPlot("##Bezier", ImVec2(400, 400), ImPlotFlags_CanvasOnly)) {
+				ImPlot::SetupAxes(nullptr, nullptr, ax_flags, ax_flags);
+				ImPlot::SetupAxesLimits(0, 1, 0, 1);
+
+				switch (lut_type) {
+				case LUT_TI:
+					break;
+				case LUT_BEZIER:
+					ImPlot::DragPoint(0, &P[0].x, &P[0].y, ImVec4(0.7, 0.7, 0.7, 1), 6, flags, &clicked[0], &hovered[0], &held[0]);
+					ImPlot::DragPoint(1, &P[1].x, &P[1].y, ImVec4(0.7, 0.7, 0.7, 1), 6, flags, &clicked[1], &hovered[1], &held[1]);
+					ImPlot::DragPoint(2, &P[2].x, &P[2].y, ImVec4(0.7, 0.7, 0.7, 1), 6, flags, &clicked[2], &hovered[2], &held[2]);
+					ImPlot::DragPoint(3, &P[3].x, &P[3].y, ImVec4(0.7, 0.7, 0.7, 1), 6, flags, &clicked[3], &hovered[3], &held[3]);
+					ImPlot::DragPoint(4, &P[4].x, &P[4].y, ImVec4(0.7, 0.7, 0.7, 1), 6, flags, &clicked[4], &hovered[4], &held[4]);
+					ImPlot::DragPoint(5, &P[5].x, &P[5].y, ImVec4(0.7, 0.7, 0.7, 1), 6, flags, &clicked[5], &hovered[5], &held[5]);
+					break;
+				case LUT_BINARY:
+					ImPlot::DragPoint(5, &P_binary[0].x, &P_binary[0].y, ImVec4(0.7, 0.7, 0.7, 1), 6, flags, &clicked[0], &hovered[0], &held[0]);
+					ImPlot::DragPoint(6, &P_binary[1].x, &P_binary[1].y, ImVec4(0.7, 0.7, 0.7, 1), 6, flags, &clicked[1], &hovered[1], &held[1]);
+					break;
+				};
+
+				const float vline_x[6][2] = { {0.0f, 0.0f},{0.2f, 0.2f}, {0.4f, 0.4f}, {0.6f, 0.6f}, {0.8f, 0.8f}, {1.0f, 1.0f} };
+				const float vline_y[6][2] = { {0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 1.0f} };
+
+				char label[5] = "##v0";
+				for (int i = 0; i < 6; ++i) {
+					label[3] = '0' + i;
+					ImPlot::SetNextLineStyle(held[i] ? ImVec4(1.0, 1.0f, 1.0f, 0.8f) : ImVec4(1.0, 1.0f, 1.0f, 0.4f), held[i] ? 3.0f : 1.0f);
+					ImPlot::PlotLine(label, vline_x[i], vline_y[i], 2, 0, 2 * sizeof(float));
+				}
+
+				has_changed_lut |= held[0] || held[1] || held[2] || held[3] || held[4] || held[5];
+
+				for (int i = 0; i < num_points; ++i) {
+					double t = i / (float)(num_points - 1);
+					LUT[i] = bezier(t, P);
+
+					LUT[i].x = LUT[i].x;
+					LUT[i].y = clamp(round(15.0 * LUT[i].y) / 15.0, 0.0, 1.0);
+
+					if (lut_type == LUT_BEZIER) {
+						plot_color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+					};
+
+					if (lut_type == LUT_BINARY) {
+						LUT[i].y = t > 0.5 ? P_binary[1].y : P_binary[0].y;
+						LUT[i].y = clamp(round(15.0 * LUT[i].y) / 15.0, 0.0, 1.0);
+						plot_color = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+					};
+
+					static int level = 0;
+					if (lut_type == LUT_TI) {
+						plot_color = ImVec4(0.0f, 0.0f, 1.0f, 1.0f);
+						for (int level_num = 0; level_num < 16; level_num++) {
+							if ((t >= phase_level[level_num]) && (t <= phase_level[level_num + 1])) {
+								if (std::abs(t - phase_level[level_num]) < std::abs(t - phase_level[level_num + 1])) {
+									level = level_num;
+								}
+								else {
+									level = level_num + 1;
+								};
+							};
+						};
+
+						if (t > phase_level[num_levels]) {
+							if (std::abs(t - phase_level[num_levels]) < std::abs(t - 1)) {
+								level = num_levels;
+							}
+							else {
+								level = 1;
+							};
+						};
+						LUT[i].y = level / 16.0;
+					};
+
+					LUTi[i] = LUT[i].x;
+					LUTj[i] = LUT[i].y;
+
+				};
+
+				ImPlot::SetNextLineStyle(ImVec4(0, 0.9f, 0, 1), held[0] || held[1] || held[2] || held[3] || held[4] || held[5] ? 4.0f : 2.0f);
+				ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 4, plot_color, 1, plot_color);
+				ImPlot::PlotScatter("##bez", &LUT[0].x, &LUT[0].y, num_points, 0, 0, sizeof(ImPlotPoint));
+				ImPlot::EndPlot();
+			};
+
+			// Store control points for saving it.
+			for (int i = 0; i < 6; ++i) {
+				LUT_control_points_x[i] = P[i].x;
+				LUT_control_points_y[i] = P[i].y;
+			};
+
+			return has_changed_lut;
+
+		}
+
+	}
 }
 

@@ -32,10 +32,15 @@ class PLMController:
         self.lib.SetFrameSequence.argtypes = [ctypes.POINTER(ctypes.c_uint64), ctypes.c_int]
         self.lib.StartSequence.argtypes = [ctypes.c_int]
         self.lib.SetLookupTable.argtypes = [ctypes.POINTER(ctypes.c_float)]
+        self.lib.SetLUTBlazed.argtypes = [ctypes.POINTER(ctypes.c_float)]
+        self.lib.SetLUTBlazed.restype = ctypes.c_bool
         self.lib.SetPLMFrame.argtypes = [ctypes.c_int]
         self.lib.SetPhaseMap.argtypes = [ctypes.POINTER(ctypes.c_int32)]
         self.lib.SetWindowed.argtypes = [ctypes.c_bool]
         self.lib.SetPhaseMap.restype = ctypes.c_int
+        self.lib.GetPhases.argtypes = [ctypes.POINTER(ctypes.c_float)]
+        self.lib.GetBezierControlPoints.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float)]
+        self.lib.SetBezierControlPoints.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float)]
         self.lib.BitpackHolograms.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8), 
                                               ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.lib.BitpackHologramsGPU.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8), 
@@ -188,6 +193,57 @@ class PLMController:
         
         phase_levels_ptr = phase_levels.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         self.lib.SetLookupTable(phase_levels_ptr)
+
+    def set_lut_blazed(self, blazed_pattern):
+        """Set a blazed grating pattern as the lookup table. The pattern is replicated across all 24 pages.
+        
+        Args:
+            blazed_pattern: 2D numpy array (M, N) of float32 with values between 0 and 1.
+                           (M=800, N=1358 for PLM resolution)
+        
+        Returns:
+            bool: True if successful
+        """
+        if not isinstance(blazed_pattern, np.ndarray) or blazed_pattern.dtype != np.float32 or blazed_pattern.ndim != 2:
+            raise ValueError("blazed_pattern must be a 2D numpy array of float32")
+        if np.any(blazed_pattern < 0) or np.any(blazed_pattern > 1):
+            raise ValueError("blazed_pattern values must be between 0 and 1")
+        if blazed_pattern.shape != (self.M, self.N):
+            raise ValueError(f"blazed_pattern shape must be ({self.M}, {self.N})")
+        
+        if not blazed_pattern.flags['C_CONTIGUOUS']:
+            blazed_pattern = np.ascontiguousarray(blazed_pattern)
+        
+        pattern_ptr = blazed_pattern.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        res = self.lib.SetLUTBlazed(pattern_ptr)
+        return bool(res)
+
+    def get_phases(self):
+        """Get the current phase lookup table (17 values)."""
+        phases = np.zeros(17, dtype=np.float32)
+        phases_ptr = phases.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        self.lib.GetPhases(phases_ptr)
+        return phases
+
+    def get_bezier_control_points(self):
+        """Get the Bezier control points (6 control points with x, y coordinates)."""
+        control_points_x = np.zeros(6, dtype=np.float32)
+        control_points_y = np.zeros(6, dtype=np.float32)
+        x_ptr = control_points_x.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        y_ptr = control_points_y.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        self.lib.GetBezierControlPoints(x_ptr, y_ptr)
+        return control_points_x, control_points_y
+
+    def set_bezier_control_points(self, control_points_x, control_points_y):
+        """Set the Bezier control points and update the curve."""
+        if not isinstance(control_points_x, np.ndarray) or control_points_x.dtype != np.float32 or control_points_x.shape != (6,):
+            raise ValueError("control_points_x must be a 1D numpy array of float32 with 6 elements")
+        if not isinstance(control_points_y, np.ndarray) or control_points_y.dtype != np.float32 or control_points_y.shape != (6,):
+            raise ValueError("control_points_y must be a 1D numpy array of float32 with 6 elements")
+        
+        x_ptr = control_points_x.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        y_ptr = control_points_y.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        self.lib.SetBezierControlPoints(x_ptr, y_ptr)
 
     def set_frame(self, frame):
         """Set a specific frame to display."""

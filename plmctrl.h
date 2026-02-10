@@ -38,7 +38,13 @@ extern "C" {
 		int num_holograms,
 		unsigned long long offset
 	);
+
 	PLM_API void SetLookupTable(float* lut);
+	PLM_API bool SetLUTBlazed(float* in);
+	PLM_API void GetPhases(float* out);
+	PLM_API void GetBezierControlPoints(float* out_x, float* out_y);
+	PLM_API void SetBezierControlPoints(float* in_x, float* in_y);
+
 	PLM_API bool SetFrameSequence(unsigned long long*, unsigned long long length);
 	PLM_API bool SetPLMFrame(unsigned long long offset);
 	PLM_API bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames, unsigned long long offset, int type);
