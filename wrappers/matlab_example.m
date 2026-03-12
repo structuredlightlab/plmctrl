@@ -88,7 +88,7 @@ phase_map = [
     1 1 1 1;
 ];
 
-order = [14, 1, 10, 6, 2, 15, 11, 7, 3, 16, 12, 8, 4, 13, 9, 5];
+order = [12, 8, 4, 14, 0, 6, 10, 2, 13, 5, 9, 1, 15, 7, 11, 3] + 1;
 phase_map = phase_map(order,:);
 
 plm.SetPhaseMap(phase_map);
