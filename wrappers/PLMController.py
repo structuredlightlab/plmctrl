@@ -3,24 +3,40 @@ import numpy as np
 import time
 
 class PLMController:
-    def __init__(self, MAX_FRAMES:int, width:int, height:int, dll_path='plmctrl.dll', x0:int = 1920, y0:int = 0 ):
-        """
-        Initialize the PLMController.
+    PLM_MODELS = {
+        '.67NIR': (904, 800),
+        '.67VIS': (1358, 800),
+    }
 
-        Args:
-            MAX_FRAMES (int): Maximum number of frames the PLM can handle.
-            width (int): Width of the PLM display in pixels.
-            height (int): Height of the PLM display in pixels.
-            dll_path (str): Path to the plmctrl.dll file (default: 'plmctrl.dll').
-            x0 (int): X-coordinate of the PLM window position (default: 1920). -- Top left corner of your main monitor is ( 0, 0 ), x0 and y0 are relative to that
-            y0 (int): Y-coordinate of the PLM window position (default: 0).
+    def __init__(self, *args, **kwargs):
         """
-        self.MAX_FRAMES = MAX_FRAMES
-        self.N = width
-        self.M = height
-        self.x0 = x0
-        self.y0 = y0
-        
+        Initialize the PLMController. Two call styles are supported:
+
+        Model-based (preferred):
+            PLMController(model, dll_path='plmctrl.dll', x0=1920, y0=0, MAX_FRAMES=120)
+            where model is one of '.67NIR', '.67VIS'.
+
+        Legacy explicit-dimensions:
+            PLMController(MAX_FRAMES, width, height, dll_path='plmctrl.dll', x0=1920, y0=0)
+        """
+        if args and isinstance(args[0], str):
+            model = args[0]
+            if model not in self.PLM_MODELS:
+                raise ValueError(f"Unknown PLM model {model!r}. Known: {list(self.PLM_MODELS)}")
+            self.N, self.M = self.PLM_MODELS[model]
+            dll_path     = args[1] if len(args) > 1 else kwargs.pop('dll_path', 'plmctrl.dll')
+            self.x0      = args[2] if len(args) > 2 else kwargs.pop('x0', 1920)
+            self.y0      = args[3] if len(args) > 3 else kwargs.pop('y0', 0)
+            self.MAX_FRAMES = kwargs.pop('MAX_FRAMES', 120)
+        else:
+            # Legacy: (MAX_FRAMES, width, height, dll_path, x0, y0)
+            self.MAX_FRAMES = args[0]      if len(args) > 0 else kwargs.pop('MAX_FRAMES')
+            self.N          = args[1]      if len(args) > 1 else kwargs.pop('width')
+            self.M          = args[2]      if len(args) > 2 else kwargs.pop('height')
+            dll_path        = args[3]      if len(args) > 3 else kwargs.pop('dll_path', 'plmctrl.dll')
+            self.x0         = args[4]      if len(args) > 4 else kwargs.pop('x0', 1920)
+            self.y0         = args[5]      if len(args) > 5 else kwargs.pop('y0', 0)
+
         # Load the 'plmctrl' library
         self.lib = ctypes.CDLL(dll_path)
         
@@ -31,17 +47,29 @@ class PLMController:
         self.lib.InsertPLMFrame.restype = ctypes.c_int
         self.lib.SetFrameSequence.argtypes = [ctypes.POINTER(ctypes.c_uint64), ctypes.c_int]
         self.lib.StartSequence.argtypes = [ctypes.c_int]
-        self.lib.SetLookupTable.argtypes = [ctypes.POINTER(ctypes.c_float)]
         self.lib.SetPLMFrame.argtypes = [ctypes.c_int]
         self.lib.SetPhaseMap.argtypes = [ctypes.POINTER(ctypes.c_int32)]
+        self.lib.SetPhaseMapNIR.argtypes = [ctypes.POINTER(ctypes.c_int32)]
         self.lib.SetWindowed.argtypes = [ctypes.c_bool]
         self.lib.SetPhaseMap.restype = ctypes.c_int
-        self.lib.BitpackHolograms.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8), 
+        self.lib.SetPhaseMapNIR.restype = ctypes.c_int
+        self.lib.GetPLMType.argtypes = []
+        self.lib.GetPLMType.restype = ctypes.c_int
+        self.lib.BitpackHolograms.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8),
                                               ctypes.c_int, ctypes.c_int, ctypes.c_int]
-        self.lib.BitpackHologramsGPU.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8), 
+        self.lib.BitpackHologramsNIR.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8),
                                                  ctypes.c_int, ctypes.c_int, ctypes.c_int]
-        self.lib.BitpackAndInsertGPU.argtypes = [ctypes.POINTER(ctypes.c_float), 
-                                                 ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        # GPU variants take an extra `bool same_phase` (true = single N*M phase shared across all holograms)
+        self.lib.BitpackHologramsGPU.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8),
+                                                 ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_bool]
+        self.lib.BitpackHologramsNIRGPU.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8),
+                                                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_bool]
+        self.lib.BitpackAndInsertGPU.argtypes = [ctypes.POINTER(ctypes.c_float),
+                                                 ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                                 ctypes.c_bool]
+        self.lib.BitpackAndInsertNIRGPU.argtypes = [ctypes.POINTER(ctypes.c_float),
+                                                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                                    ctypes.c_bool]
 
         # PLM USB comms functions
         self.lib.SetSource.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
@@ -68,7 +96,19 @@ class PLMController:
         self.lib.Play.restype = ctypes.c_int
         self.lib.Stop.argtypes = []
         self.lib.Stop.restype = ctypes.c_int
-        
+
+        # Lock in N/M on the DLL side so it can infer PLM type (VIS vs NIR),
+        # then read it back. is_nir drives bitpack dispatch and frame shape.
+        self.lib.SetPLMWindowPos(self.N, self.M, self.x0, self.y0)
+        self.is_nir = bool(self.lib.GetPLMType())
+
+    @property
+    def frame_shape(self):
+        """uint8 RGBA frame shape (height, width) for the current PLM type.
+        NIR: (2M, 4*(3N+4)); VIS: (2M, 4*2N)."""
+        active_w = (3 * self.N + 4) if self.is_nir else (2 * self.N)
+        return (2 * self.M, 4 * active_w)
+
     def open(self):
         """Open the PLM connection."""
         res = self.lib.Open()
@@ -176,19 +216,6 @@ class PLMController:
         """Equivalent to pressing the Stop button on PLM UI."""
         self.lib.Stop()
 
-    def set_lookup_table(self, phase_levels):
-        """Set the lookup table for phase levels."""
-        if not isinstance(phase_levels, np.ndarray) or phase_levels.dtype != np.float32 or phase_levels.ndim != 1:
-            raise ValueError("phase_levels must be a 1D numpy array of float32")
-        if np.any(phase_levels < 0) or np.any(phase_levels > 1):
-            raise ValueError("phase_levels must be between 0 and 1")
-        
-        if not phase_levels.flags['C_CONTIGUOUS']:
-            phase_levels = np.ascontiguousarray(phase_levels)
-        
-        phase_levels_ptr = phase_levels.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        self.lib.SetLookupTable(phase_levels_ptr)
-
     def set_frame(self, frame):
         """Set a specific frame to display."""
         if not isinstance(frame, int) or frame < 0:
@@ -197,76 +224,108 @@ class PLMController:
         self.lib.SetPLMFrame(frame)
 
     def set_phase_map(self, phase_map):
-        """Set the phase map for holograms."""
+        """Set the VIS phase map (16 levels x 4 cells = 64 ints)."""
         if not isinstance(phase_map, np.ndarray) or not np.issubdtype(phase_map.dtype, np.integer) or phase_map.ndim != 2:
             raise ValueError("phase_map must be a 2D numpy array of integers")
-        
+
         if not phase_map.flags['C_CONTIGUOUS']:
             phase_map = np.ascontiguousarray(phase_map)
-        
+
         phase_map_ptr = phase_map.astype(np.int32).ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
         res = self.lib.SetPhaseMap(phase_map_ptr)
         return res
 
+    def set_phase_map_nir(self, phase_map):
+        """Set the NIR phase map (32 levels x 6 cells = 192 ints)."""
+        if not isinstance(phase_map, np.ndarray) or not np.issubdtype(phase_map.dtype, np.integer) or phase_map.ndim != 2:
+            raise ValueError("phase_map must be a 2D numpy array of integers")
+
+        if not phase_map.flags['C_CONTIGUOUS']:
+            phase_map = np.ascontiguousarray(phase_map)
+
+        phase_map_ptr = phase_map.astype(np.int32).ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
+        res = self.lib.SetPhaseMapNIR(phase_map_ptr)
+        return res
+
     def bitpack_holograms(self, phase):
-        """Create and bit-pack holograms from phase data."""
+        """Create and bit-pack holograms from phase data (CPU). Dispatches VIS/NIR by self.is_nir."""
         if not isinstance(phase, np.ndarray) or phase.dtype != np.float32 or phase.ndim != 3:
             raise ValueError("phase must be a 3D numpy array of float32")
-        if np.any(phase < 0) or np.any(phase > 1):
-            raise ValueError("phase values must be between 0 and 1")
-        
-        num_patterns = phase.shape[0]
-        frame = np.zeros((2 * self.M, 4 * 2 * self.N), dtype=np.uint8)
-        
-        phase_ptr = phase.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        frame_ptr = frame.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
-        
-        self.lib.BitpackHolograms(phase_ptr, frame_ptr, self.N, self.M, num_patterns)
-        return frame
-    
-    def bitpack_holograms_gpu(self, phase):
-        """Create and bit-pack holograms from phase data. This function uses compute shaders and runs on the GPU."""
-        if not isinstance(phase, np.ndarray) or phase.dtype != np.float32 or phase.ndim != 3:
-            raise ValueError("phase must be a 3D numpy array of float32")
-        if np.any(phase < 0) or np.any(phase > 1):
-            raise ValueError("phase values must be between 0 and 1")
+        # Tolerate small fp drift from upstream normalization (e.g. mod(x, 2*pi)/(2*pi))
+        phase = np.clip(phase, 0.0, 1.0)
 
         num_patterns = phase.shape[0]
-        frame = np.zeros((2 * self.M, 4 * 2 * self.N), dtype=np.uint8)
-        
+        frame = np.zeros(self.frame_shape, dtype=np.uint8)
+
         phase_ptr = phase.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         frame_ptr = frame.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
-        
-        self.lib.BitpackHologramsGPU(phase_ptr, frame_ptr, self.N, self.M, num_patterns)
 
+        fn = self.lib.BitpackHologramsNIR if self.is_nir else self.lib.BitpackHolograms
+        fn(phase_ptr, frame_ptr, self.N, self.M, num_patterns)
         return frame
-    
-    def bitpack_holograms_gpu_ptr(self, phase_ptr, frame_ptr, num_patterns):
-        """Create and bit-pack holograms from phase data. This function uses compute shaders and runs on the GPU."""
+
+    def bitpack_holograms_gpu(self, phase, same_phase=False):
+        """Create and bit-pack holograms on the GPU. Dispatches VIS/NIR by self.is_nir.
+
+        If same_phase=True, `phase` is a single N*M frame shared across all 24 holograms.
+        Otherwise it is a (num_patterns, M, N) stack."""
+        if not isinstance(phase, np.ndarray) or phase.dtype != np.float32:
+            raise ValueError("phase must be a numpy array of float32")
+        # Tolerate small fp drift from upstream normalization (e.g. mod(x, 2*pi)/(2*pi))
+        phase = np.clip(phase, 0.0, 1.0)
+
+        if same_phase:
+            if phase.ndim != 2:
+                raise ValueError("with same_phase=True, phase must be a 2D (M, N) array")
+            num_patterns = 24
+        else:
+            if phase.ndim != 3:
+                raise ValueError("phase must be a 3D numpy array of float32")
+            num_patterns = phase.shape[0]
+
+        frame = np.zeros(self.frame_shape, dtype=np.uint8)
+
+        phase_ptr = phase.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        frame_ptr = frame.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
+
+        fn = self.lib.BitpackHologramsNIRGPU if self.is_nir else self.lib.BitpackHologramsGPU
+        fn(phase_ptr, frame_ptr, self.N, self.M, num_patterns, same_phase)
+        return frame
+
+    def bitpack_holograms_gpu_ptr(self, phase_ptr, frame_ptr, num_patterns, same_phase=False):
+        """Create and bit-pack holograms on the GPU using user-provided pointers. Dispatches VIS/NIR by self.is_nir."""
         if not isinstance(phase_ptr, ctypes.POINTER(ctypes.c_float)):
             raise ValueError("phase_ptr must be a pointer to a float32 array")
         if not isinstance(frame_ptr, ctypes.POINTER(ctypes.c_uint8)):
             raise ValueError("frame_ptr must be a pointer to a uint8 array")
         if not isinstance(num_patterns, int) or num_patterns <= 0:
             raise ValueError("num_patterns must be a positive integer")
-        
-        res = self.lib.BitpackHologramsGPU(phase_ptr, frame_ptr, self.N, self.M, num_patterns)
-        return res
-    
-    def bitpack_and_insert_gpu(self, phase, offset):
-        """Create and bit-pack holograms from phase data. This function uses compute shaders and runs on the GPU."""
-        if not isinstance(phase, np.ndarray) or phase.dtype != np.float32 or phase.ndim != 3:
-            raise ValueError("phase must be a 3D numpy array of float32")
-        if np.any(phase < 0) or np.any(phase > 1):
-            raise ValueError("phase values must be between 0 and 1")
+
+        fn = self.lib.BitpackHologramsNIRGPU if self.is_nir else self.lib.BitpackHologramsGPU
+        return fn(phase_ptr, frame_ptr, self.N, self.M, num_patterns, same_phase)
+
+    def bitpack_and_insert_gpu(self, phase, offset, same_phase=False):
+        """Bitpack on GPU and insert directly into the PLM frame buffer at `offset`. Dispatches VIS/NIR by self.is_nir."""
+        if not isinstance(phase, np.ndarray) or phase.dtype != np.float32:
+            raise ValueError("phase must be a numpy array of float32")
+        # Tolerate small fp drift from upstream normalization (e.g. mod(x, 2*pi)/(2*pi))
+        phase = np.clip(phase, 0.0, 1.0)
         if not isinstance(offset, int) or offset < 0:
             raise ValueError("offset must be a non-negative integer")
-        
-        num_patterns = phase.shape[0]
+
+        if same_phase:
+            if phase.ndim != 2:
+                raise ValueError("with same_phase=True, phase must be a 2D (M, N) array")
+            num_patterns = 24
+        else:
+            if phase.ndim != 3:
+                raise ValueError("phase must be a 3D numpy array of float32")
+            num_patterns = phase.shape[0]
+
         phase_ptr = phase.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        
-        res = self.lib.BitpackAndInsertGPU(phase_ptr, self.N, self.M, num_patterns, offset)
-        return res
+
+        fn = self.lib.BitpackAndInsertNIRGPU if self.is_nir else self.lib.BitpackAndInsertGPU
+        return fn(phase_ptr, self.N, self.M, num_patterns, offset, same_phase)
 
     # New methods for configuration
     def set_source(self, source, port_width):

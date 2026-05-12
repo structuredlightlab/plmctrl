@@ -3,11 +3,12 @@ cbuffer Constants : register(b0)
     uint N;
     uint M;
     uint num_holograms;
+    uint phase_stride;   // N*M for distinct phases per hologram, 0 for shared phase
 };
 
-StructuredBuffer<float> phase : register(t0);
-StructuredBuffer<float> phases : register(t1);
-StructuredBuffer<int> phase_map : register(t2);
+StructuredBuffer<float> phases : register(t0);
+StructuredBuffer<int> phase_map : register(t1);
+StructuredBuffer<float> phase : register(t2);
 
 RWTexture2D<uint> hologram : register(u0);
 
@@ -25,6 +26,7 @@ uint QuantisePhase(float phaseVal)
     }
     return 0; // Default if outside range
 }
+
 
 [numthreads(16, 16, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
@@ -60,7 +62,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     {
         uint color_id = n / 8; // 0 for R (n=0-7), 1 for G (n=8-15), 2 for B (n=16-23)
         uint offset = n % 8; // Bit position within the byte (0-7)
-        float phase_val = phase[i + j * N + n * N * M];
+        float phase_val = phase[i + j * N + n * phase_stride];
         uint level = QuantisePhase(phase_val);
         uint bit = phase_map[level * 4 + k];
       

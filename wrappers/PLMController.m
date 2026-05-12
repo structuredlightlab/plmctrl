@@ -39,13 +39,16 @@ plm.Stop = @Stop;                    % PLM stops reading from the screen
 plm.StopUI = @StopUI;                    % Stop the PLM debug UI
 plm.PauseUI = @PauseUI;                    % Pause the PLM debug UI
 plm.ResumeUI = @ResumeUI;                    % Resume the PLM UI
-plm.SetLookupTable = @SetLookupTable;    % Set the lookup table for phase levels
 plm.SetFrame = @SetFrame;                % Set a specific frame to display
-plm.SetPhaseMap = @SetPhaseMap;          % Set the phase map for holograms
-plm.BitpackHolograms = @BitpackHolograms;  % Create and bit-pack holograms from phase data
+plm.SetPhaseMap = @SetPhaseMap;          % Set the VIS phase map (16 levels x 4 cells)
+plm.SetPhaseMapNIR = @SetPhaseMapNIR;    % Set the NIR phase map (32 levels x 6 cells)
+plm.BitpackHolograms = @BitpackHolograms;  % Create and bit-pack holograms from phase data (VIS, CPU)
+plm.BitpackHologramsNIR = @BitpackHologramsNIR;  % VIS variant for NIR PLM (CPU)
 plm.BitpackHologramsGPU = @BitpackHologramsGPU;
+plm.BitpackHologramsNIRGPU = @BitpackHologramsNIRGPU;
 plm.BitpackHologramsGPUPtr = @BitpackHologramsGPUPtr;
 plm.BitpackAndInsertGPU = @BitpackAndInsertGPU;
+plm.BitpackAndInsertNIRGPU = @BitpackAndInsertNIRGPU;
 plm.SetWindowedMode = @SetWindowed;
 plm.Cleanup = @cleanup;                  % Unload the library and cleanup resources
 
@@ -53,7 +56,9 @@ plm.Cleanup = @cleanup;                  % Unload the library and cleanup resour
 plm.SetSource = @SetSource;
 plm.SetPortSwap = @SetPortSwap;
 plm.SetConnectionType = @SetConnectionType;
+plm.GetConnectionType = @GetConnectionType;
 plm.SetVideoPatternMode = @SetVideoPatternMode;
+plm.GetVideoPatternMode = @GetVideoPatternMode;
 plm.UpdateLUT = @UpdateLUT;
 plm.SetPixelMode = @SetPixelMode;  % New method added
 
@@ -121,79 +126,123 @@ plm.Configure = @Configure;
         calllib('plmctrl', 'ResumeUI');
     end
 
-% Function to set the lookup table for phase levels
-    function SetLookupTable(phase_levels)
-        validateattributes(phase_levels, {'single'}, {'vector', 'numel', 17});
-        calllib('plmctrl', 'SetLookupTable', libpointer('singlePtr', phase_levels));
-    end
-
     function SetFrame(frame)
         validateattributes(frame, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
         calllib('plmctrl', 'SetPLMFrame', frame);
     end
 
     function res = SetPhaseMap(phase_map)
+        % VIS phase map: 16 levels x 4 cells = 64 ints
         validateattributes(phase_map, {'numeric'}, {'2d', 'integer'});
         res = calllib('plmctrl', 'SetPhaseMap', libpointer('int32Ptr', transpose(phase_map)));
     end
 
-% Function to create and bit-pack holograms from phase data
+    function res = SetPhaseMapNIR(phase_map)
+        % NIR phase map: 32 levels x 6 cells = 192 ints
+        validateattributes(phase_map, {'numeric'}, {'2d', 'integer'});
+        res = calllib('plmctrl', 'SetPhaseMapNIR', libpointer('int32Ptr', transpose(phase_map)));
+    end
+
+% Function to create and bit-pack holograms from phase data (VIS, CPU)
     function frame = BitpackHolograms(phase)
         validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
-        % Initialize an empty array to hold the bit-packed hologram
         numPatterns = size(phase, 3);
         frame = zeros(4*2*plm.N, 2*plm.M, 'uint8');
 
-        % Prepare pointers to the phase data and the hologram array
         phasePtr = libpointer('singlePtr', phase);
         hologramPtr = libpointer('uint8Ptr', frame);
 
-        % Bit-pack the holograms using the library function
         calllib('plmctrl', 'BitpackHolograms', phasePtr, hologramPtr, plm.N, plm.M, numPatterns);
 
-        % Retrieve the bit-packed hologram
         frame = hologramPtr.Value;
     end
 
-% Function to create and bit-pack holograms from phase data
-    function frame = BitpackHologramsGPU(phase)
-        %         validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
-        % Initialize an empty array to hold the bit-packed hologram
-        numHolograms = size(phase, 3);
+% Function to create and bit-pack holograms from phase data (NIR, CPU)
+    function frame = BitpackHologramsNIR(phase)
+        validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
+        numPatterns = size(phase, 3);
+        frame = zeros(4*(3*plm.N + 4), 2*plm.M, 'uint8');
+
+        phasePtr = libpointer('singlePtr', phase);
+        hologramPtr = libpointer('uint8Ptr', frame);
+
+        calllib('plmctrl', 'BitpackHologramsNIR', phasePtr, hologramPtr, plm.N, plm.M, numPatterns);
+
+        frame = hologramPtr.Value;
+    end
+
+% Function to create and bit-pack holograms (VIS, GPU)
+% same_phase = true: phase is a single 2D plane shared across all 24 holograms
+    function frame = BitpackHologramsGPU(phase, same_phase)
+        if nargin < 2, same_phase = false; end
+        if same_phase
+            numHolograms = 24;
+        else
+            numHolograms = size(phase, 3);
+        end
         frame = zeros(4*2*plm.N, 2*plm.M, 'uint8');
 
-        % Prepare pointers to the phase data and the hologram array
         phasePtr = libpointer('singlePtr', phase);
         framePtr = libpointer('uint8Ptr', frame);
 
-        % Bit-pack the holograms using the library function
-        res = calllib('plmctrl', 'BitpackHologramsGPU', phasePtr, framePtr, plm.N, plm.M, numHolograms);
+        res = calllib('plmctrl', 'BitpackHologramsGPU', phasePtr, framePtr, plm.N, plm.M, numHolograms, logical(same_phase));
         fprintf("Bitpacked: %d\n", res);
 
-        % Retrieve the bit-packed hologram
         frame = framePtr.Value;
     end
 
-% Function to create and bit-pack holograms using pointers
-    function res = BitpackHologramsGPUPtr(phasePtr, framePtr, numHolograms)
-        % Bit-pack the holograms using the library function
-        res = calllib('plmctrl', 'BitpackHologramsGPU', phasePtr, framePtr, plm.N, plm.M, numHolograms);
+% Function to create and bit-pack holograms (NIR, GPU)
+    function frame = BitpackHologramsNIRGPU(phase, same_phase)
+        if nargin < 2, same_phase = false; end
+        if same_phase
+            numHolograms = 24;
+        else
+            numHolograms = size(phase, 3);
+        end
+        frame = zeros(4*(3*plm.N + 4), 2*plm.M, 'uint8');
+
+        phasePtr = libpointer('singlePtr', phase);
+        framePtr = libpointer('uint8Ptr', frame);
+
+        res = calllib('plmctrl', 'BitpackHologramsNIRGPU', phasePtr, framePtr, plm.N, plm.M, numHolograms, logical(same_phase));
+        fprintf("Bitpacked: %d\n", res);
+
+        frame = framePtr.Value;
+    end
+
+% Function to create and bit-pack holograms using user-provided pointers (VIS, GPU)
+    function res = BitpackHologramsGPUPtr(phasePtr, framePtr, numHolograms, same_phase)
+        if nargin < 4, same_phase = false; end
+        res = calllib('plmctrl', 'BitpackHologramsGPU', phasePtr, framePtr, plm.N, plm.M, numHolograms, logical(same_phase));
         fprintf("Bitpacked: %d\n", res);
     end
 
-% Function to create and bit-pack holograms from phase data
-    function res = BitpackAndInsertGPU(phase, offset)
-        %         validateattributes(phase, {'single'}, {'3d', '>=', 0, '<=', 1'});
-        %         validateattributes(offset, {'numeric'}, {'scalar', 'nonnegative', 'integer'});
+% Bitpack on GPU and insert directly into the PLM frame buffer at `offset` (VIS)
+    function res = BitpackAndInsertGPU(phase, offset, same_phase)
+        if nargin < 3, same_phase = false; end
+        if same_phase
+            numPatterns = 24;
+        else
+            numPatterns = size(phase, 3);
+        end
 
-        % Initialize an empty array to hold the bit-packed hologram
-        numPatterns = size(phase, 3);
-
-        % Prepare pointers to the phase data and the hologram array
         phasePtr = libpointer('singlePtr', phase);
 
-        % Bit-pack the holograms using the library function
-        res = calllib('plmctrl', 'BitpackAndInsertGPU', phasePtr, plm.N, plm.M, numPatterns, offset);
+        res = calllib('plmctrl', 'BitpackAndInsertGPU', phasePtr, plm.N, plm.M, numPatterns, offset, logical(same_phase));
+    end
+
+% Bitpack on GPU and insert directly into the PLM frame buffer at `offset` (NIR)
+    function res = BitpackAndInsertNIRGPU(phase, offset, same_phase)
+        if nargin < 3, same_phase = false; end
+        if same_phase
+            numPatterns = 24;
+        else
+            numPatterns = size(phase, 3);
+        end
+
+        phasePtr = libpointer('singlePtr', phase);
+
+        res = calllib('plmctrl', 'BitpackAndInsertNIRGPU', phasePtr, plm.N, plm.M, numPatterns, offset, logical(same_phase));
     end
 
     function res = SetSource(source, portWidth)

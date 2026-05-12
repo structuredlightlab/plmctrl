@@ -23,7 +23,7 @@ y0 = 0;
 
 plm = PLMController(MAX_FRAMES, N, M, x0, y0);
 
-plm.Open(); % This opens USB comms with the PLM, after this command, you can call certain functions that changes a few PLM settings.
+% plm.Open(); % This opens USB comms with the PLM, after this command, you can call certain functions that changes a few PLM settings.
 
 plm.SetWindowedMode(true); % Only for debug purposes -- Suggested if you're testing how this library work
 
@@ -109,7 +109,7 @@ plm.SetFrame(offset);
 
 %% Generate multiple holograms and send them to plmctrl (Fastest way)
 % Here we use pointers to avoid unnecessary allocations. 
-
+MAX_FRAMES=5
 [x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
 wedge = @(alpha, beta) alpha*x + beta*y;
 
@@ -144,7 +144,7 @@ plm.SetFrame(offset);
 %% Generate multiple holograms and send them to plmctrl (Slow way)
 [x, y] = meshgrid(linspace(-1,1,M), linspace(-M/N,M/N,N));
 wedge = @(alpha, beta) alpha*x + beta*y;
-
+MAX_FRAMES=6
 numHolograms = 24;
 phase = zeros(N, M, numHolograms, 'single');
 frame_set = zeros(4*2*N, 2*M, MAX_FRAMES, 'uint8');

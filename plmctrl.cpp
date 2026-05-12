@@ -1,12 +1,12 @@
 /*
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Structured Light Lab
- * Version: 0.6.0 beta
- * Date: 8/Jun/2025
+ * Version: 1.0.0
+ * Date: 30/Apr/2026
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
- * Phase-only Light Modulator (DLP6750 EVM). The library facilitates the creation, bitpacking, and
+ * Phase-only Light Modulator (DLP6750 EVM), VIS and NIR versions. The library facilitates the creation, bitpacking, and
  * display of holograms on the PLM, ensuring precise frame pacing during hologram sequence display.
 
  * If you use plmctrl in your research, please cite:
@@ -33,7 +33,7 @@
 
 
 // To be defined if compiled as an executable
-// #define PLM_DEBUG
+#define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -67,14 +67,31 @@ static UINT g_ResizeWidth = 0, g_ResizeHeight = 0;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 ID3D11Texture2D* pTexture = nullptr;
 ID3D11ShaderResourceView* data_texture_srv = nullptr;
+ID3D11Texture2D* pPhaseTexture = nullptr;
+ID3D11ShaderResourceView* phase_texture_srv = nullptr;
 D3D11_TEXTURE2D_DESC desc = {};
 
 // Bitpack Compute Shader declarations
-static ID3D11ComputeShader* g_pComputeShader = nullptr;
+static ID3D11ComputeShader* g_pComputeShader = nullptr;     // VIS
+static ID3D11ComputeShader* g_pComputeShaderNIR = nullptr;  // NIR
+static ID3D11ComputeShader* g_pComputeShaderUnpack = nullptr;     // VIS unpack
+static ID3D11ComputeShader* g_pComputeShaderUnpackNIR = nullptr;  // NIR unpack
 static ID3D11Buffer* g_pConstantBuffer = nullptr;
 static ID3D11Buffer* g_pPhaseBuffer = nullptr;
-static ID3D11Buffer* g_pLUTBuffer = nullptr;
+static ID3D11Buffer* g_pLUTBuffer = nullptr;       // phase LUT: 17 floats for VIS, 64 floats (odd+even) for NIR
 static ID3D11Buffer* g_pPhaseMapBuffer = nullptr;
+
+// Unpack pipeline: input bitpacked frame, output phase float buffer + readback,
+// per-mode 16/64-int inverse-map buffers (rebuilt from the forward map every call).
+static ID3D11Texture2D*           g_pUnpackInputTex      = nullptr;
+static ID3D11ShaderResourceView*  g_pUnpackInputSRV      = nullptr;
+static ID3D11Buffer*              g_pUnpackOutBuffer     = nullptr;
+static ID3D11UnorderedAccessView* g_pUnpackOutUAV        = nullptr;
+static ID3D11Buffer*              g_pUnpackOutStaging    = nullptr;
+static ID3D11Buffer*              g_pInverseMapVISBuf    = nullptr;
+static ID3D11ShaderResourceView*  g_pInverseMapVISSRV    = nullptr;
+static ID3D11Buffer*              g_pInverseMapNIRBuf    = nullptr;
+static ID3D11ShaderResourceView*  g_pInverseMapNIRSRV    = nullptr;
 
 static ID3D11ShaderResourceView* g_pPhaseSRV = nullptr;
 static ID3D11ShaderResourceView* g_pLUTSRV = nullptr;
@@ -84,6 +101,7 @@ static ID3D11Buffer* g_pHologramBuffer = nullptr;
 static ID3D11UnorderedAccessView* g_pHologramUAV = nullptr;
 ID3D11Texture2D* pHologramTexture = nullptr;
 ID3D11Texture2D* pStagingTexture;
+static ID3D11SamplerState* g_pSamplerNearest = nullptr;
 
 
 // 16 bytes
@@ -91,7 +109,7 @@ struct c_Params {
 	uint32_t N;
 	uint32_t M;
 	uint32_t num_holograms;
-	uint32_t pad;
+	uint32_t phase_stride;   // N*M for distinct phases per hologram, 0 for shared phase
 };
 
 
@@ -114,6 +132,22 @@ enum PLM_MODE {
 	PLM_CONTINUOUS = 2
 };
 
+enum PLM_TYPE {
+	VIS,
+	NIR
+};
+
+PLM_TYPE plm_type = VIS;
+inline bool IsNIRMode() {
+	return plm_type == NIR;
+}
+inline uint64_t ActiveHologramWidthPx() {
+	return IsNIRMode() ? (3ULL * (uint64_t)N + 4ULL) : (2ULL * (uint64_t)N);
+}
+inline uint64_t ActiveHologramHeightPx() {
+	return 2ULL * (uint64_t)M;
+}
+
 PLM_MODE plm_mode = PLM_IDLE;
 
 bool plm_connected = false;
@@ -127,8 +161,11 @@ bool continuous_mode = false;
 std::atomic<bool> pause_UI = false;
 std::atomic<bool> bitpacking_in_progress = false;
 std::atomic<bool> UI_is_rendering = false;
+std::atomic<bool> same_thread = false;
 
-
+// Bumped each time InsertPLMFrame writes into frame_set; used by the Phase
+// preview to invalidate its unpack cache when the bitpacked data changes.
+std::atomic<uint64_t> frame_set_writes = 0;
 
 int frames_to_play = 0;
 int frames_in_sequence = -1;
@@ -150,31 +187,90 @@ bool windowed = false;
 std::vector<unsigned char> frame;
 std::vector<uint8_t> frame_set;
 std::vector<uint64_t> frame_order;
+std::vector<float> phase_set;
 
 std::mutex dx_mutex;
 
-// TI's default lookup-table
-float phases[17] = { 0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1.0 };
+const float vis_phases[17] = { 0, 0.0100, 0.0205, 0.0422, 0.0560, 0.0727, 0.1131, 0.1734, 0.3426, 0.3707, 0.4228, 0.4916, 0.5994, 0.6671, 0.7970, 0.9375, 1.0 };
 
-// Binary counting phase-map, has to be calibrated.
-int phase_map[] = {
-	0, 0, 0, 0,
-	1, 0, 0, 0,
-	0, 1, 0, 0,
-	1, 1, 0, 0,
-	0, 0, 1, 0,
-	1, 0, 1, 0,
-	0, 1, 1, 0,
-	1, 1, 1, 0,
-	0, 0, 0, 1,
-	1, 0, 0, 1,
-	0, 1, 0, 1,
-	1, 1, 0, 1,
-	0, 0, 1, 1,
-	1, 0, 1, 1,
-	0, 1, 1, 1,
-	1, 1, 1, 1
+// Empirical phase levels for NIR PLM (typical values, normalised to [0,1])
+// Odd columns (1-indexed):  phase states 1-32 → indices 0-31
+const float nir_phases_odd[32] = {
+	0.0000f, 0.0127f, 0.0293f, 0.0662f, 0.0522f, 0.0675f, 0.0854f, 0.1261f,
+	0.1427f, 0.1834f, 0.2166f, 0.2803f, 0.2561f, 0.2968f, 0.3299f, 0.3962f,
+	0.3771f, 0.4102f, 0.4510f, 0.5108f, 0.4930f, 0.5261f, 0.5682f, 0.6306f,
+	0.6127f, 0.6675f, 0.7338f, 0.8229f, 0.7847f, 0.8369f, 0.9045f, 1.0000f
 };
+// Even columns (1-indexed): phase states 1-32 → indices 0-31
+const float nir_phases_even[32] = {
+	0.0064f, 0.0153f, 0.0280f, 0.0599f, 0.0611f, 0.0726f, 0.0866f, 0.1223f,
+	0.1414f, 0.1771f, 0.2076f, 0.2675f, 0.2573f, 0.2930f, 0.3236f, 0.3847f,
+	0.3911f, 0.4178f, 0.4586f, 0.5121f, 0.5134f, 0.5414f, 0.5809f, 0.6357f,
+	0.6255f, 0.6713f, 0.7350f, 0.8127f, 0.8038f, 0.8446f, 0.9057f, 0.9822f
+};
+
+// NIR Alpha phase map: 32 levels x 6 cells
+// Cell order: k=0 bottom-left, k=1 top-left, k=2 bottom-mid, k=3 top-mid, k=4 bottom-right, k=5 top-right
+// For level l: k0=bit4(l), k1=bit2(l), k2=bit0(l), k3=bit1(l), k4=bit2(l), k5=bit3(l)
+int nir_phase_map[192] = {
+	0,0,0,0,0,0,  // l=0  00000
+	0,0,1,0,0,0,  // l=1  00001
+	0,0,0,1,0,0,  // l=2  00010
+	0,0,1,1,0,0,  // l=3  00011
+	0,1,0,0,1,0,  // l=4  00100
+	0,1,1,0,1,0,  // l=5  00101
+	0,1,0,1,1,0,  // l=6  00110
+	0,1,1,1,1,0,  // l=7  00111
+	0,0,0,0,0,1,  // l=8  01000
+	0,0,1,0,0,1,  // l=9  01001
+	0,0,0,1,0,1,  // l=10 01010
+	0,0,1,1,0,1,  // l=11 01011
+	0,1,0,0,1,1,  // l=12 01100
+	0,1,1,0,1,1,  // l=13 01101
+	0,1,0,1,1,1,  // l=14 01110
+	0,1,1,1,1,1,  // l=15 01111
+	1,0,0,0,0,0,  // l=16 10000
+	1,0,1,0,0,0,  // l=17 10001
+	1,0,0,1,0,0,  // l=18 10010
+	1,0,1,1,0,0,  // l=19 10011
+	1,1,0,0,1,0,  // l=20 10100
+	1,1,1,0,1,0,  // l=21 10101
+	1,1,0,1,1,0,  // l=22 10110
+	1,1,1,1,1,0,  // l=23 10111
+	1,0,0,0,0,1,  // l=24 11000
+	1,0,1,0,0,1,  // l=25 11001
+	1,0,0,1,0,1,  // l=26 11010
+	1,0,1,1,0,1,  // l=27 11011
+	1,1,0,0,1,1,  // l=28 11100
+	1,1,1,0,1,1,  // l=29 11101
+	1,1,0,1,1,1,  // l=30 11110
+	1,1,1,1,1,1,  // l=31 11111
+};
+
+// VIS phase map: 16 levels x 4 cells
+// TI DLP6750 VIS
+int vis_phase_map[64] = {
+	0,0,1,1,  // l=0  → 0011 → Phase State  1 (0.00%)
+	0,0,0,1,  // l=1  → 0001 → Phase State  3 (2.58%)
+	0,0,1,0,  // l=2  →  → Phase State  2 (1.26%)
+	1,0,1,1,  // l=3  →  → Phase State  4 (4.94%)
+	0,0,0,0,  // l=4  →  → Phase State  5 (7.09%)
+	1,0,0,1,  // l=5  →  → Phase State  6 (8.78%)
+	1,0,1,0,  // l=6  →  → Phase State  7 (13.81%)
+	1,0,0,0,  // l=7  →  → Phase State  8 (21.53%)
+	0,1,1,1,  // l=8  →  → Phase State  9 (32.74%)
+	0,1,0,1,  // l=9  →  → Phase State 10 (36.10%)
+	0,1,1,0,  // l=10 →  → Phase State 11 (42.03%)
+	0,1,0,0,  // l=11 →  → Phase State 12 (50.45%)
+	1,1,1,1,  // l=12 →  → Phase State 13 (59.16%)
+	1,1,0,1,  // l=13 →  → Phase State 14 (67.29%)
+	1,1,1,0,  // l=14 →  → Phase State 15 (82.54%)
+	1,1,0,0,  // l=15 →  → Phase State 16 (100.00%)
+};
+
+
+inline int* ActivePhaseMap()     { return IsNIRMode() ? nir_phase_map : vis_phase_map; }
+inline int  ActivePhaseMapSize() { return IsNIRMode() ? 192 : 64; }
 
 std::thread ui_thread;
 std::thread plm_status_thread;
@@ -188,13 +284,13 @@ void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void DebugWindow(bool show, ImGuiIO& io);
 
-bool CompileComputeShader(ID3D11Device* device)
+bool CompileComputeShaderFromFile(ID3D11Device* device, const wchar_t* filename, ID3D11ComputeShader** ppShader)
 {
 	ID3DBlob* pBlob = nullptr;
 	ID3DBlob* pErrorBlob = nullptr;
 
 	HRESULT hr = D3DCompileFromFile(
-		L"BitpackHologramsCS.hlsl",
+		filename,
 		nullptr,
 		nullptr,
 		"main",
@@ -209,21 +305,13 @@ bool CompileComputeShader(ID3D11Device* device)
 	{
 		if (pErrorBlob)
 		{
-			// Print the error message to stderr
-			std::cerr << "Compute Shader Compilation Error: "
-				<< (char*)pErrorBlob->GetBufferPointer() << std::endl;
+			std::cerr << "Compute Shader Compilation Error (" << std::endl;
+			std::cerr << (char*)pErrorBlob->GetBufferPointer() << std::endl;
 			pErrorBlob->Release();
 		}
 		if (pBlob) pBlob->Release();
 		return false;
 	}
-
-	hr = device->CreateComputeShader(
-		pBlob->GetBufferPointer(),
-		pBlob->GetBufferSize(),
-		nullptr,
-		&g_pComputeShader
-	);
 
 	if (pBlob->GetBufferSize() == 0)
 	{
@@ -231,6 +319,13 @@ bool CompileComputeShader(ID3D11Device* device)
 		pBlob->Release();
 		return false;
 	}
+
+	hr = device->CreateComputeShader(
+		pBlob->GetBufferPointer(),
+		pBlob->GetBufferSize(),
+		nullptr,
+		ppShader
+	);
 
 	pBlob->Release();
 	if (FAILED(hr))
@@ -240,6 +335,26 @@ bool CompileComputeShader(ID3D11Device* device)
 	}
 
 	return true;
+};
+
+bool CompileComputeShader(ID3D11Device* device)
+{
+	return CompileComputeShaderFromFile(device, L"BitpackHologramsCS.hlsl", &g_pComputeShader);
+};
+
+bool CompileComputeShaderNIR(ID3D11Device* device)
+{
+	return CompileComputeShaderFromFile(device, L"BitpackHologramsNIR_CS.hlsl", &g_pComputeShaderNIR);
+};
+
+bool CompileComputeShaderUnpack(ID3D11Device* device)
+{
+	return CompileComputeShaderFromFile(device, L"UnpackHologramsCS.hlsl", &g_pComputeShaderUnpack);
+};
+
+bool CompileComputeShaderUnpackNIR(ID3D11Device* device)
+{
+	return CompileComputeShaderFromFile(device, L"UnpackHologramsNIR_CS.hlsl", &g_pComputeShaderUnpackNIR);
 };
 
 bool InitBitpackResources()
@@ -289,9 +404,9 @@ bool InitBitpackResources()
 	}
 
 
-	//////////////
+	// NIR LUT buffer: 64 floats (odd[0..31] + even[32..63])
 	bufDesc = {};
-	bufDesc.ByteWidth = sizeof(float) * 17;
+	bufDesc.ByteWidth = sizeof(float) * 64;
 	bufDesc.Usage = D3D11_USAGE_DEFAULT;
 	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -302,12 +417,12 @@ bool InitBitpackResources()
 	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
 	srvDesc.BufferEx.FirstElement = 0;
-	srvDesc.BufferEx.NumElements = 17;
+	srvDesc.BufferEx.NumElements = 64;
 	hr = g_pd3dDevice->CreateShaderResourceView(g_pLUTBuffer, &srvDesc, &g_pLUTSRV);
 
-	//////////////
+	// Phase map buffer sized for largest case (NIR: 192 ints)
 	bufDesc = {};
-	bufDesc.ByteWidth = sizeof(int) * 64;
+	bufDesc.ByteWidth = sizeof(int) * 192;
 	bufDesc.Usage = D3D11_USAGE_DEFAULT;
 	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -318,13 +433,13 @@ bool InitBitpackResources()
 	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
 	srvDesc.BufferEx.FirstElement = 0;
-	srvDesc.BufferEx.NumElements = 64;
+	srvDesc.BufferEx.NumElements = 192;
 	hr = g_pd3dDevice->CreateShaderResourceView(g_pPhaseMapBuffer, &srvDesc, &g_pPhaseMapSRV);
 
-	// Hologram buffer for output (corrected to match output size)
+	// Hologram buffer for output
 	D3D11_TEXTURE2D_DESC texDesc = {};
-	texDesc.Width = 2 * N;
-	texDesc.Height = 2 * M;
+	texDesc.Width = (UINT)ActiveHologramWidthPx();
+	texDesc.Height = (UINT)ActiveHologramHeightPx();
 	texDesc.MipLevels = 1;
 	texDesc.ArraySize = 1;
 	texDesc.Format = DXGI_FORMAT_R32_UINT;
@@ -394,6 +509,267 @@ bool InitBitpackResources()
 	return true;
 }
 
+bool InitUnpackResources()
+{
+	if (!g_pd3dDevice) return false;
+
+	const uint64_t holo_w = ActiveHologramWidthPx();
+	const uint64_t holo_h = ActiveHologramHeightPx();
+	const int max_num_holograms = 24;
+
+	HRESULT hr;
+
+	// Input texture (bitpacked frame). USAGE_DEFAULT + UpdateSubresource for upload.
+	{
+		D3D11_TEXTURE2D_DESC td = {};
+		td.Width = (UINT)holo_w;
+		td.Height = (UINT)holo_h;
+		td.MipLevels = 1;
+		td.ArraySize = 1;
+		td.Format = DXGI_FORMAT_R32_UINT;
+		td.SampleDesc.Count = 1;
+		td.Usage = D3D11_USAGE_DEFAULT;
+		td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		hr = g_pd3dDevice->CreateTexture2D(&td, nullptr, &g_pUnpackInputTex);
+		if (FAILED(hr)) return false;
+
+		hr = g_pd3dDevice->CreateShaderResourceView(g_pUnpackInputTex, nullptr, &g_pUnpackInputSRV);
+		if (FAILED(hr)) return false;
+	}
+
+	// Output buffer: structured float, sized for max input dimensions × 24 holograms.
+	// Sized in (N, M) — uses the globals N, M which are set by SetPLMWindowPos.
+	{
+		D3D11_BUFFER_DESC bd = {};
+		bd.ByteWidth = (UINT)(sizeof(float) * N * M * max_num_holograms);
+		bd.Usage = D3D11_USAGE_DEFAULT;
+		bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+		bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		bd.StructureByteStride = sizeof(float);
+		hr = g_pd3dDevice->CreateBuffer(&bd, nullptr, &g_pUnpackOutBuffer);
+		if (FAILED(hr)) return false;
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		uavDesc.Buffer.NumElements = (UINT)(N * M * max_num_holograms);
+		hr = g_pd3dDevice->CreateUnorderedAccessView(g_pUnpackOutBuffer, &uavDesc, &g_pUnpackOutUAV);
+		if (FAILED(hr)) return false;
+
+		// Staging buffer for CPU readback.
+		D3D11_BUFFER_DESC sbd = {};
+		sbd.ByteWidth = bd.ByteWidth;
+		sbd.Usage = D3D11_USAGE_STAGING;
+		sbd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		sbd.MiscFlags = 0;
+		hr = g_pd3dDevice->CreateBuffer(&sbd, nullptr, &g_pUnpackOutStaging);
+		if (FAILED(hr)) return false;
+	}
+
+	// Inverse-map buffers (rebuilt and uploaded each call from the current
+	// forward map; D3D11_USAGE_DEFAULT + UpdateSubresource).
+	auto make_inverse_map_buffer = [&](UINT count, ID3D11Buffer** outBuf, ID3D11ShaderResourceView** outSRV) -> bool {
+		D3D11_BUFFER_DESC bd = {};
+		bd.ByteWidth = (UINT)(sizeof(int) * count);
+		bd.Usage = D3D11_USAGE_DEFAULT;
+		bd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		bd.StructureByteStride = sizeof(int);
+		HRESULT h = g_pd3dDevice->CreateBuffer(&bd, nullptr, outBuf);
+		if (FAILED(h)) return false;
+		D3D11_SHADER_RESOURCE_VIEW_DESC sd = {};
+		sd.Format = DXGI_FORMAT_UNKNOWN;
+		sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+		sd.BufferEx.NumElements = count;
+		h = g_pd3dDevice->CreateShaderResourceView(*outBuf, &sd, outSRV);
+		return SUCCEEDED(h);
+	};
+	if (!make_inverse_map_buffer(16, &g_pInverseMapVISBuf, &g_pInverseMapVISSRV)) return false;
+	if (!make_inverse_map_buffer(64, &g_pInverseMapNIRBuf, &g_pInverseMapNIRSRV)) return false;
+
+	return true;
+}
+
+// Builds the inverse phase map from the current forward map.
+// out is sized 16 (VIS) or 64 (NIR); -1 marks codes that no level produces.
+static void BuildInverseMapVIS(int out[16]) {
+	for (int i = 0; i < 16; i++) out[i] = -1;
+	for (int level = 0; level < 16; level++) {
+		int code = vis_phase_map[level * 4 + 0]
+		         | (vis_phase_map[level * 4 + 1] << 1)
+		         | (vis_phase_map[level * 4 + 2] << 2)
+		         | (vis_phase_map[level * 4 + 3] << 3);
+		out[code & 0xF] = level;
+	}
+}
+static void BuildInverseMapNIR(int out[64]) {
+	for (int i = 0; i < 64; i++) out[i] = -1;
+	for (int level = 0; level < 32; level++) {
+		int code = 0;
+		for (int k = 0; k < 6; k++) code |= (nir_phase_map[level * 6 + k] & 1) << k;
+		out[code & 0x3F] = level;
+	}
+}
+
+bool UnpackHologramsGPU(
+	unsigned char* frame,
+	float* phase,
+	unsigned long long N_in,
+	unsigned long long M_in,
+	int num_holograms)
+{
+	plm_type = VIS;
+#ifndef PLM_DEBUG
+	bitpacking_in_progress.store(true);
+	while (!same_thread.load() && UI_is_rendering.load())
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+#endif
+
+	if (num_holograms > 24 || !frame || !phase) {
+#ifndef PLM_DEBUG
+		bitpacking_in_progress.store(false);
+#endif
+		return false;
+	}
+	if (!g_pd3dDevice || !g_pd3dDeviceContext || !g_pComputeShaderUnpack ||
+	    !g_pConstantBuffer || !g_pUnpackInputTex || !g_pUnpackInputSRV ||
+	    !g_pUnpackOutBuffer || !g_pUnpackOutUAV || !g_pUnpackOutStaging ||
+	    !g_pInverseMapVISBuf || !g_pInverseMapVISSRV) {
+		std::cout << "Unpack resources not initialized" << std::endl;
+#ifndef PLM_DEBUG
+		bitpacking_in_progress.store(false);
+#endif
+		return false;
+	}
+
+	// Constant buffer
+	c_Params cp = {};
+	cp.N = (uint32_t)N_in;
+	cp.M = (uint32_t)M_in;
+	cp.num_holograms = (uint32_t)num_holograms;
+	cp.phase_stride = (uint32_t)(N_in * M_in);
+	g_pd3dDeviceContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &cp, 0, 0);
+
+	// Inverse map (rebuilt from current vis_phase_map)
+	int inv[16];
+	BuildInverseMapVIS(inv);
+	g_pd3dDeviceContext->UpdateSubresource(g_pInverseMapVISBuf, 0, nullptr, inv, 0, 0);
+
+	// Upload bitpacked frame: VIS layout is 2N × 2M, 4 bytes/pixel
+	const uint64_t row_bytes = 2 * N_in * 4;
+	g_pd3dDeviceContext->UpdateSubresource(g_pUnpackInputTex, 0, nullptr, frame, (UINT)row_bytes, 0);
+
+	// Bind & dispatch
+	g_pd3dDeviceContext->CSSetShader(g_pComputeShaderUnpack, nullptr, 0);
+	g_pd3dDeviceContext->CSSetConstantBuffers(0, 1, &g_pConstantBuffer);
+	ID3D11ShaderResourceView* srvs[2] = { g_pUnpackInputSRV, g_pInverseMapVISSRV };
+	g_pd3dDeviceContext->CSSetShaderResources(0, 2, srvs);
+	g_pd3dDeviceContext->CSSetUnorderedAccessViews(0, 1, &g_pUnpackOutUAV, nullptr);
+	g_pd3dDeviceContext->Dispatch((UINT)ceil((double)N_in / 16.0), (UINT)ceil((double)M_in / 16.0), 1);
+
+	// Unbind UAV before readback
+	ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+	g_pd3dDeviceContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+
+	// Readback
+	g_pd3dDeviceContext->CopyResource(g_pUnpackOutStaging, g_pUnpackOutBuffer);
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	if (FAILED(g_pd3dDeviceContext->Map(g_pUnpackOutStaging, 0, D3D11_MAP_READ, 0, &mapped))) {
+#ifndef PLM_DEBUG
+		bitpacking_in_progress.store(false);
+#endif
+		return false;
+	}
+	memcpy(phase, mapped.pData, (size_t)N_in * M_in * num_holograms * sizeof(float));
+	g_pd3dDeviceContext->Unmap(g_pUnpackOutStaging, 0);
+
+#ifndef PLM_DEBUG
+	bitpacking_in_progress.store(false);
+#endif
+	return true;
+}
+
+bool UnpackHologramsNIRGPU(
+	unsigned char* frame,
+	float* phase,
+	unsigned long long N_in,
+	unsigned long long M_in,
+	int num_holograms)
+{
+	plm_type = NIR;
+#ifndef PLM_DEBUG
+	bitpacking_in_progress.store(true);
+	while (!same_thread.load() && UI_is_rendering.load())
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+#endif
+
+	if (num_holograms > 24 || !frame || !phase) {
+#ifndef PLM_DEBUG
+		bitpacking_in_progress.store(false);
+#endif
+		return false;
+	}
+	if (!g_pd3dDevice || !g_pd3dDeviceContext || !g_pComputeShaderUnpackNIR ||
+	    !g_pConstantBuffer || !g_pUnpackInputTex || !g_pUnpackInputSRV ||
+	    !g_pUnpackOutBuffer || !g_pUnpackOutUAV || !g_pUnpackOutStaging ||
+	    !g_pLUTBuffer || !g_pLUTSRV ||
+	    !g_pInverseMapNIRBuf || !g_pInverseMapNIRSRV) {
+		std::cout << "Unpack NIR resources not initialized" << std::endl;
+#ifndef PLM_DEBUG
+		bitpacking_in_progress.store(false);
+#endif
+		return false;
+	}
+
+	c_Params cp = {};
+	cp.N = (uint32_t)N_in;
+	cp.M = (uint32_t)M_in;
+	cp.num_holograms = (uint32_t)num_holograms;
+	cp.phase_stride = (uint32_t)(N_in * M_in);
+	g_pd3dDeviceContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &cp, 0, 0);
+
+	// Refresh per-column LUT (reuses bitpacker buffer); cheap (256 bytes total).
+	D3D11_BOX box;
+	box = { 0, 0, 0, (UINT)(sizeof(float) * 32), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, nir_phases_odd, 0, 0);
+	box = { (UINT)(sizeof(float) * 32), 0, 0, (UINT)(sizeof(float) * 64), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, nir_phases_even, 0, 0);
+
+	int inv[64];
+	BuildInverseMapNIR(inv);
+	g_pd3dDeviceContext->UpdateSubresource(g_pInverseMapNIRBuf, 0, nullptr, inv, 0, 0);
+
+	// NIR bitpacked layout: (3N+4) × 2M, 4 bytes/pixel
+	const uint64_t row_bytes = (3 * N_in + 4) * 4;
+	g_pd3dDeviceContext->UpdateSubresource(g_pUnpackInputTex, 0, nullptr, frame, (UINT)row_bytes, 0);
+
+	g_pd3dDeviceContext->CSSetShader(g_pComputeShaderUnpackNIR, nullptr, 0);
+	g_pd3dDeviceContext->CSSetConstantBuffers(0, 1, &g_pConstantBuffer);
+	ID3D11ShaderResourceView* srvs[3] = { g_pUnpackInputSRV, g_pLUTSRV, g_pInverseMapNIRSRV };
+	g_pd3dDeviceContext->CSSetShaderResources(0, 3, srvs);
+	g_pd3dDeviceContext->CSSetUnorderedAccessViews(0, 1, &g_pUnpackOutUAV, nullptr);
+	g_pd3dDeviceContext->Dispatch((UINT)ceil((double)N_in / 16.0), (UINT)ceil((double)M_in / 16.0), 1);
+
+	ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+	g_pd3dDeviceContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+
+	g_pd3dDeviceContext->CopyResource(g_pUnpackOutStaging, g_pUnpackOutBuffer);
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	if (FAILED(g_pd3dDeviceContext->Map(g_pUnpackOutStaging, 0, D3D11_MAP_READ, 0, &mapped))) {
+#ifndef PLM_DEBUG
+		bitpacking_in_progress.store(false);
+#endif
+		return false;
+	}
+	memcpy(phase, mapped.pData, (size_t)N_in * M_in * num_holograms * sizeof(float));
+	g_pd3dDeviceContext->Unmap(g_pUnpackOutStaging, 0);
+
+#ifndef PLM_DEBUG
+	bitpacking_in_progress.store(false);
+#endif
+	return true;
+}
+
 bool Cleanup() {
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	StopUI();
@@ -446,8 +822,6 @@ bool StartSequence(int number_of_frames) {
 	return true;
 }
 
-
-
 bool StartDisplaying() {
 	// Start displaying continuously on the PLM
 	// Tailored for real-time applications.
@@ -484,7 +858,7 @@ int UI(){
 		L"plmctrl",
 		WS_POPUP | WS_VISIBLE,
 		window_x0, window_y0,
-		2*N, 2*M,
+		(int)ActiveHologramWidthPx(), (int)ActiveHologramHeightPx(),
 		nullptr,
 		nullptr,
 		wc.hInstance,
@@ -548,8 +922,8 @@ int UI(){
 
 
 	// Frame texture (holds the bitpacked holograms)
-	desc.Width = 2 * N;
-	desc.Height = 2 * M;
+	desc.Width = (UINT)ActiveHologramWidthPx();
+	desc.Height = (UINT)ActiveHologramHeightPx();
 	desc.MipLevels = 1;
 	desc.ArraySize = 1;
 	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -561,6 +935,13 @@ int UI(){
 	g_pd3dDevice->CreateTexture2D(&desc, nullptr, &pTexture);
 	g_pd3dDevice->CreateShaderResourceView(pTexture, nullptr, &data_texture_srv);
 
+	// Phase preview texture: native (N, M) so each pixel maps to one phase sample.
+	D3D11_TEXTURE2D_DESC phaseDesc = desc;
+	phaseDesc.Width  = (UINT)N;
+	phaseDesc.Height = (UINT)M;
+	g_pd3dDevice->CreateTexture2D(&phaseDesc, nullptr, &pPhaseTexture);
+	g_pd3dDevice->CreateShaderResourceView(pPhaseTexture, nullptr, &phase_texture_srv);
+
 	D3D11_SAMPLER_DESC samplerDesc = {};
 	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT; // Nearest neighbor (no interpolation)
 	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -570,8 +951,7 @@ int UI(){
 	samplerDesc.MinLOD = 0;
 	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
-	ID3D11SamplerState* pSamplerState = nullptr;
-	g_pd3dDevice->CreateSamplerState(&samplerDesc, &pSamplerState);
+	g_pd3dDevice->CreateSamplerState(&samplerDesc, &g_pSamplerNearest);
 
 
 
@@ -671,7 +1051,9 @@ int UI(){
 		ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 		ImGui::End();
 
-		static uint64_t frame_elements = 4 * (2 * N) * (2 * M);
+		const uint64_t active_width = ActiveHologramWidthPx();
+		const uint64_t active_height = ActiveHologramHeightPx();
+		uint64_t frame_elements = 4ULL * active_width * active_height;
 		if (frames_to_play == frames_in_sequence && sequence_active) {
 			plm_mode = PLM_PLAYING;
 			frame_index = 0;
@@ -683,7 +1065,7 @@ int UI(){
 			+ frame_order[frame_index % MAX_FRAMES] * frame_elements;
 
 		// PLM frame window
-		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, pSamplerState, io, 2 * N, 2 * M, &mutex, window_x0, window_y0);
+		PLM::ImagescPLM("PLM", plm_image_ptr, data_texture_srv, g_pd3dDevice, g_pd3dDeviceContext, g_pSamplerNearest, io, (int)active_width, (int)active_height, &mutex, window_x0, window_y0);
 
 
 		DebugWindow(show_debug_window, io);
@@ -779,9 +1161,15 @@ void StartUI(unsigned int number_of_frames) {
 	running = true;
 	plm_image_ptr = nullptr;
 
-	frame.resize(4 * (2 * N) * (2 * M));
-	frame_set.resize(4 * (2 * N) * (2 * M) * MAX_FRAMES);
+	const uint64_t active_width = ActiveHologramWidthPx();
+	const uint64_t active_height = ActiveHologramHeightPx();
+	frame.resize(4ULL * active_width * active_height);
+	frame_set.resize(4ULL * active_width * active_height * MAX_FRAMES);
 	std::fill(frame_set.begin(), frame_set.end(), 255);
+
+	// Continuous-phase storage parallel to frame_set: 24 phase planes per frame slot.
+	// Sized in (N, M) which differ between VIS and NIR.
+	phase_set.assign((size_t)MAX_FRAMES * 24ULL * (size_t)N * (size_t)M, 0.0f);
 
 
 #ifndef PLM_DEBUG
@@ -824,19 +1212,40 @@ void SetPLMWindowPos(int width, int height, int x0 = 0, int y0 = 0 ) {
 	M = height;
 	window_x0 = x0;
 	window_y0 = y0;
+
+	if (N == 904 && M == 800) {
+		plm_type = NIR;
+	} else if (N == 1358 && M == 800) {
+		plm_type = VIS;
+	}
 };
 
 
-void SetLookupTable(float* lut) {
-	for (int i = 0; i < 17; i++) {
-		phases[i] = lut[i];
-	}
-}
-
 bool SetPhaseMap(int* new_phase_map) {
+	plm_type = VIS;
 	const int phase_map_size = 16 * 4;
 	for (int i = 0; i < phase_map_size; i++) {
-		phase_map[i] = new_phase_map[i];
+		vis_phase_map[i] = new_phase_map[i];
+	};
+	return true;
+}
+
+//void SetLookupTable(float* lut) {
+//	for (int i = 0; i < 17; i++) {
+//		phases[i] = lut[i];
+//	}
+//}
+
+int GetPLMType() {
+	return (int)plm_type;
+}
+
+bool SetPhaseMapNIR(int* new_phase_map) {
+	plm_type = NIR;
+	// NIR: 32 levels x 6 cells per 3x2 superpixel = 192 entries
+	const int phase_map_size = 32 * 6;
+	for (int i = 0; i < phase_map_size; i++) {
+		nir_phase_map[i] = new_phase_map[i];
 	};
 	return true;
 }
@@ -866,7 +1275,7 @@ bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, uns
 
 	//std::cout << "Inserting " << num_frames << " frames at offset " << offset << std::endl;
 
-	uint64_t rgb_elements = (2 * N) * (2 * M);
+	uint64_t rgb_elements = ActiveHologramWidthPx() * ActiveHologramHeightPx();
 	uint64_t frame_elements = 4 * rgb_elements;
 	uint64_t total_elements = num_frames * frame_elements;
 	int k = 0;
@@ -892,6 +1301,7 @@ bool InsertPLMFrame(unsigned char* frame, unsigned long long num_frames = 1, uns
 	};
 	//std::cout << num_frames << " frames inserted" << std::endl;
 
+	frame_set_writes.fetch_add(1);
 	return true;
 };
 
@@ -918,7 +1328,7 @@ bool GrabPLMFrame(unsigned char* hologram, uint64_t index = 0) {
 		return false;
 	};
 
-	uint64_t frame_elements = 4 * (2 * N) * (2 * M);
+	uint64_t frame_elements = 4ULL * ActiveHologramWidthPx() * ActiveHologramHeightPx();
 	uint64_t ptr_offset = index * frame_elements;
 
 	for (uint64_t i = 0; i < frame_elements; i++) {
@@ -930,14 +1340,29 @@ bool GrabPLMFrame(unsigned char* hologram, uint64_t index = 0) {
 
 unsigned int QuantisePhase(float phaseVal) {
 	for (int level_num = 0; level_num < 17; level_num++) {
-		if ((phaseVal >= phases[level_num]) && (phaseVal < phases[level_num + 1])) {
-			if (fabs(phaseVal - phases[level_num]) < fabs(phaseVal - phases[level_num + 1])) {
+		if ((phaseVal >= vis_phases[level_num]) && (phaseVal < vis_phases[level_num + 1])) {
+			if (fabs(phaseVal - vis_phases[level_num]) < fabs(phaseVal - vis_phases[level_num + 1])) {
 				return level_num;
 			};
 			return (level_num + 1) % 16;
 		}
 	}
 	return 0; // Default return if no condition is met
+}
+
+unsigned int QuantisePhaseNIR(float phaseVal, int col_parity) {
+	// col_parity: 0 = odd column (1-indexed), 1 = even column (1-indexed)
+	const float* lut = (col_parity == 0) ? nir_phases_odd : nir_phases_even;
+	float min_dist = 2.0f;
+	unsigned int best_level = 0;
+	for (int l = 0; l < 32; l++) {
+		float dist = fabsf(phaseVal - lut[l]);
+		if (dist < min_dist) {
+			min_dist = dist;
+			best_level = l;
+		}
+	}
+	return best_level;
 }
 
 bool BitpackHolograms(
@@ -947,6 +1372,7 @@ bool BitpackHolograms(
 	unsigned long long M,
 	int num_holograms
 ) {
+	plm_type = VIS;
 	// Check if the number of holograms is within the limit
 	if (num_holograms > 24) {
 		return false;
@@ -969,10 +1395,10 @@ bool BitpackHolograms(
 				// Quantize the phase values
 				level = QuantisePhase(phase[i + j * N + n * phase_elements]);
 				// Encode the phase values into the hologram
-				hologram[4 * (2 * i + 0) + (2 * j + 1) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 0] << offset;
-				hologram[4 * (2 * i + 0) + (2 * j + 0) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 1] << offset;
-				hologram[4 * (2 * i + 1) + (2 * j + 1) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 2] << offset;
-				hologram[4 * (2 * i + 1) + (2 * j + 0) * (4 * 2 * N) + color_id] |= phase_map[level * 4 + 3] << offset;
+				hologram[4 * (2 * i + 0) + (2 * j + 1) * (4 * 2 * N) + color_id] |= vis_phase_map[level * 4 + 0] << offset;
+				hologram[4 * (2 * i + 0) + (2 * j + 0) * (4 * 2 * N) + color_id] |= vis_phase_map[level * 4 + 1] << offset;
+				hologram[4 * (2 * i + 1) + (2 * j + 1) * (4 * 2 * N) + color_id] |= vis_phase_map[level * 4 + 2] << offset;
+				hologram[4 * (2 * i + 1) + (2 * j + 0) * (4 * 2 * N) + color_id] |= vis_phase_map[level * 4 + 3] << offset;
 
 
 				hologram[4 * (2 * i + 0) + (2 * j + 1) * (4 * 2 * N) + 3] = 255;
@@ -987,23 +1413,89 @@ bool BitpackHolograms(
 	return true;
 };
 
-bool BitpackHologramsGPU(
+bool BitpackHologramsNIR(
 	float* phase,
 	unsigned char* hologram,
 	unsigned long long N,
 	unsigned long long M,
 	int num_holograms
+) {
+	plm_type = NIR;
+	// NIR PLM: 904 x 800 physical pixels, 3x2 superpixel, 32 levels
+	// Output hologram: (3*N + 4) x (2*M) pixels = 2716 x 1600 for N=904, M=800
+	// 2 zero-padded columns on each side (EVM expects 2716 wide)
+	// Caller must zero the hologram buffer before calling.
+
+	if (num_holograms > 24) {
+		return false;
+	};
+
+	uint64_t phase_elements = N * M;
+	uint64_t holo_width = 3 * N + 4;
+	uint64_t holo_height = 2 * M;
+	uint64_t row_stride = 4 * holo_width;
+
+	// NIR 3x2 superpixel cell offsets (column-major, bottom then top per column)
+	// Matches VIS convention: k=0 bottom-left, k=1 top-left, ...
+	static const int nir_dx[6] = {0, 0, 1, 1, 2, 2};
+	static const int nir_dy[6] = {1, 0, 1, 0, 1, 0};
+
+	uint64_t holo = 0;
+
+	for (int n = 0; n < num_holograms; n++) {
+
+		uint64_t color_id = floor(holo % 24 / 8);
+		uint64_t offset = holo % 8;
+
+		for (uint64_t j = 0; j < M; j++) {
+			for (uint64_t i = 0; i < N; i++) {
+				float phase_val = phase[i + j * N + n * phase_elements];
+				int col_parity = i % 2; // 0 = odd col (1-indexed), 1 = even col
+				unsigned int level = QuantisePhaseNIR(phase_val, col_parity);
+
+				uint64_t base_col = 2 + 3 * i; // 2 columns zero-padding on left
+				uint64_t base_row = 2 * j;
+
+				for (int k = 0; k < 6; k++) {
+					uint64_t col = base_col + nir_dx[k];
+					uint64_t row = base_row + nir_dy[k];
+
+					hologram[4 * col + row * row_stride + color_id] |= nir_phase_map[level * 6 + k] << offset;
+					hologram[4 * col + row * row_stride + 3] = 255;
+				}
+			};
+		};
+		holo++;
+	}
+
+	// Set alpha for zero-padded columns
+	for (uint64_t j = 0; j < holo_height; j++) {
+		for (uint64_t pad_col = 0; pad_col < 2; pad_col++) {
+			hologram[4 * pad_col + j * row_stride + 3] = 255;
+		}
+		for (uint64_t pad_col = holo_width - 2; pad_col < holo_width; pad_col++) {
+			hologram[4 * pad_col + j * row_stride + 3] = 255;
+		}
+	}
+
+	return true;
+};
+
+bool BitpackHologramsGPU(
+	float* phase,
+	unsigned char* hologram,
+	unsigned long long N,
+	unsigned long long M,
+	int num_holograms,
+	bool same_phase
 )
 {
-	// Pause the UI main loop
+	plm_type = VIS;
+#ifndef PLM_DEBUG
 	bitpacking_in_progress.store(true);
-
-	//Check if UI_is_rendering is true
-	while (UI_is_rendering.load()) {
+	while (!same_thread.load() && UI_is_rendering.load())
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		// show bitpacking_in_progress value
-		//std::cout << "Bitpacking in progress: " << bitpacking_in_progress.load() << std::endl;
-	};
+#endif
 
 	// Check if the number of holograms is within the limit
 	if (num_holograms > 24) return false;
@@ -1016,34 +1508,36 @@ bool BitpackHologramsGPU(
 	// Check all resources are initialized
 	if (!g_pd3dDevice || !g_pd3dDeviceContext || !g_pComputeShader ||
 		!g_pConstantBuffer || !g_pPhaseBuffer || !g_pPhaseSRV ||
-		!pHologramTexture || !g_pHologramUAV || !pStagingTexture || !g_pLUTBuffer || !g_pPhaseMapBuffer || !g_pLUTSRV) {
+		!pHologramTexture || !g_pHologramUAV || !pStagingTexture || !g_pPhaseMapBuffer) {
 		std::cout << "Resource not initialized" << std::endl;
 		return false;
 	};
 
-	// Update constant buffer 
+	// Update constant buffer
 	c_Params constant = {};
 	constant.N = (uint32_t)N;
 	constant.M = (uint32_t)M;
 	constant.num_holograms = (uint32_t)num_holograms;
+	constant.phase_stride = same_phase ? 0u : (uint32_t)(N * M);
 	g_pd3dDeviceContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &constant, 0, 0);
 
 	D3D11_BOX box;
+
 	// Update LUT buffer with current data 
 	box = { 0, 0, 0, (UINT)(sizeof(float) * 17), 1, 1 };
-	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, phases, 0, 0);
-
+	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, vis_phases, 0, 0);
 	ZeroMemory(&box, sizeof(box));
-	// Update PhaseMap buffer with current data
+
+	// Update PhaseMap buffer with VIS phase map (16 levels x 4 cells = 64 ints)
 	box = { 0, 0, 0, (UINT)(sizeof(int) * 64), 1, 1 };
-	g_pd3dDeviceContext->UpdateSubresource(g_pPhaseMapBuffer, 0, &box, phase_map, 0, 0);
+	g_pd3dDeviceContext->UpdateSubresource(g_pPhaseMapBuffer, 0, &box, vis_phase_map, 0, 0);
 
 	D3D11_MAPPED_SUBRESOURCE mappedResource;
 	HRESULT hr_ = g_pd3dDeviceContext->Map(g_pPhaseBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
 	if (SUCCEEDED(hr_)) {
 		BYTE* pDest = reinterpret_cast<BYTE*>(mappedResource.pData);
-		size_t bufferSize = N * M * num_holograms * sizeof(float);  // Total size in bytes
-		memcpy(pDest, phase, bufferSize);
+		size_t phase_count = same_phase ? (size_t)(N * M) : (size_t)(N * M * num_holograms);
+		memcpy(pDest, phase, phase_count * sizeof(float));
 		g_pd3dDeviceContext->Unmap(g_pPhaseBuffer, 0);
 	} else {
 		return false;
@@ -1051,9 +1545,9 @@ bool BitpackHologramsGPU(
 
 	g_pd3dDeviceContext->CSSetShader(g_pComputeShader, nullptr, 0);
 	g_pd3dDeviceContext->CSSetConstantBuffers(0, 1, &g_pConstantBuffer);
-	g_pd3dDeviceContext->CSSetShaderResources(0, 1, &g_pPhaseSRV);
-	g_pd3dDeviceContext->CSSetShaderResources(1, 1, &g_pLUTSRV);
-	g_pd3dDeviceContext->CSSetShaderResources(2, 1, &g_pPhaseMapSRV);
+	g_pd3dDeviceContext->CSSetShaderResources(0, 1, &g_pLUTSRV);
+	g_pd3dDeviceContext->CSSetShaderResources(1, 1, &g_pPhaseMapSRV);
+	g_pd3dDeviceContext->CSSetShaderResources(2, 1, &g_pPhaseSRV);
 	g_pd3dDeviceContext->CSSetUnorderedAccessViews(0, 1, &g_pHologramUAV, nullptr);
 
 	g_pd3dDeviceContext->Dispatch(ceil(2.0 * N / 16.0), ceil(2.0 * M / 16.0), 1);
@@ -1077,8 +1571,8 @@ bool BitpackHologramsGPU(
 	// Copy to hologram array, accounting for RowPitch
 	uint8_t* dest = static_cast<uint8_t*>(hologram);         // Destination buffer
 	uint8_t* src = static_cast<uint8_t*>(mapped.pData);      // Source: mapped texture data
-	uint32_t widthBytes = 2 * N * 4;                         // Width of one row in bytes (2*N pixels, 4 bytes each)
-	uint32_t height = 2 * M;                                 // Number of rows
+	uint32_t widthBytes = (uint32_t)(2 * N * 4);             // VIS: 2*N pixels per row, 4 bytes each
+	uint32_t height = (uint32_t)(2 * M);
 
 	for (uint32_t row = 0; row < height; ++row) {
 		// Copy each row, respecting the pitch of the mapped resource
@@ -1089,7 +1583,9 @@ bool BitpackHologramsGPU(
 
 	g_pd3dDeviceContext->Unmap(pStagingTexture, 0);
 
+#ifndef PLM_DEBUG
 	bitpacking_in_progress.store(false);
+#endif
 
 	return true;
 }
@@ -1099,10 +1595,123 @@ bool BitpackAndInsertGPU(
 	unsigned long long N,
 	unsigned long long M,
 	int num_holograms,
-	unsigned long long offset	
+	unsigned long long offset,
+	bool same_phase
 ) {
-	if (!BitpackHologramsGPU(phase, frame.data(), N, M, num_holograms)) {
+	if (!BitpackHologramsGPU(phase, frame.data(), N, M, num_holograms, same_phase)) {
 		std::cerr << "Failed to bitpack holograms" << std::endl;
+		return false;
+	};
+
+	InsertPLMFrame((unsigned char*) frame.data(), 1, offset, 1);
+	SetPLMFrame(offset);
+
+	return true;
+}
+
+bool BitpackHologramsNIRGPU(
+	float* phase,
+	unsigned char* hologram,
+	unsigned long long N,
+	unsigned long long M,
+	int num_holograms,
+	bool same_phase
+)
+{
+	plm_type = NIR;
+#ifndef PLM_DEBUG
+	bitpacking_in_progress.store(true);
+	while (!same_thread.load() && UI_is_rendering.load())
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+#endif
+
+	if (num_holograms > 24) return false;
+
+	if (!phase || !hologram) {
+		std::cout << "Null pointer detected" << std::endl;
+		return false;
+	};
+
+	if (!g_pd3dDevice || !g_pd3dDeviceContext || !g_pComputeShaderNIR ||
+		!g_pConstantBuffer || !g_pPhaseBuffer || !g_pPhaseSRV ||
+		!pHologramTexture || !g_pHologramUAV || !pStagingTexture ||
+		!g_pLUTBuffer || !g_pLUTSRV || !g_pPhaseMapBuffer) {
+		std::cout << "Resource not initialized" << std::endl;
+		return false;
+	};
+
+	c_Params constant = {};
+	constant.N = (uint32_t)N;
+	constant.M = (uint32_t)M;
+	constant.num_holograms = (uint32_t)num_holograms;
+	constant.phase_stride = same_phase ? 0u : (uint32_t)(N * M);
+	g_pd3dDeviceContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &constant, 0, 0);
+
+	D3D11_BOX box;
+	box = { 0, 0, 0, (UINT)(sizeof(float) * 32), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, nir_phases_odd, 0, 0);
+	box = { (UINT)(sizeof(float) * 32), 0, 0, (UINT)(sizeof(float) * 64), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, nir_phases_even, 0, 0);
+
+	box = { 0, 0, 0, (UINT)(sizeof(int) * 192), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pPhaseMapBuffer, 0, &box, nir_phase_map, 0, 0);
+
+	D3D11_MAPPED_SUBRESOURCE mappedResource;
+	HRESULT hr_ = g_pd3dDeviceContext->Map(g_pPhaseBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
+	if (SUCCEEDED(hr_)) {
+		size_t phase_count = same_phase ? (size_t)(N * M) : (size_t)(N * M * num_holograms);
+		memcpy(mappedResource.pData, phase, phase_count * sizeof(float));
+		g_pd3dDeviceContext->Unmap(g_pPhaseBuffer, 0);
+	} else {
+		return false;
+	};
+
+	g_pd3dDeviceContext->CSSetShader(g_pComputeShaderNIR, nullptr, 0);
+	g_pd3dDeviceContext->CSSetConstantBuffers(0, 1, &g_pConstantBuffer);
+	g_pd3dDeviceContext->CSSetShaderResources(0, 1, &g_pPhaseSRV);
+	g_pd3dDeviceContext->CSSetShaderResources(1, 1, &g_pLUTSRV);
+	g_pd3dDeviceContext->CSSetShaderResources(2, 1, &g_pPhaseMapSRV);
+	g_pd3dDeviceContext->CSSetUnorderedAccessViews(0, 1, &g_pHologramUAV, nullptr);
+
+	uint64_t holo_width  = 3 * N + 4;
+	uint64_t holo_height = 2 * M;
+	g_pd3dDeviceContext->Dispatch(
+		(UINT)ceil((double)holo_width  / 16.0),
+		(UINT)ceil((double)holo_height / 16.0),
+		1
+	);
+
+	g_pd3dDeviceContext->CopyResource(pStagingTexture, pHologramTexture);
+
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	if (FAILED(g_pd3dDeviceContext->Map(pStagingTexture, 0, D3D11_MAP_READ, 0, &mapped)))
+		return false;
+
+	uint8_t* dest = static_cast<uint8_t*>(hologram);
+	uint8_t* src  = static_cast<uint8_t*>(mapped.pData);
+	uint32_t widthBytes = (uint32_t)(holo_width * 4);
+	for (uint32_t row = 0; row < (uint32_t)holo_height; ++row)
+		memcpy(dest + row * widthBytes, src + row * mapped.RowPitch, widthBytes);
+
+	g_pd3dDeviceContext->Unmap(pStagingTexture, 0);
+
+#ifndef PLM_DEBUG
+	bitpacking_in_progress.store(false);
+#endif
+
+	return true;
+}
+
+bool BitpackAndInsertNIRGPU(
+	float* phase,
+	unsigned long long N,
+	unsigned long long M,
+	int num_holograms,
+	unsigned long long offset,
+	bool same_phase
+) {
+	if (!BitpackHologramsNIRGPU(phase, frame.data(), N, M, num_holograms, same_phase)) {
+		std::cerr << "Failed to bitpack NIR holograms" << std::endl;
 		return false;
 	};
 
@@ -1148,12 +1757,32 @@ bool CreateDeviceD3D(HWND hWnd)
 	CreateRenderTarget();
 
     if (!CompileComputeShader(g_pd3dDevice)){
-        std::cerr << "Failed to compile bitpack compute shader" << std::endl;
+        std::cerr << "Failed to compile VIS bitpack compute shader" << std::endl;
+        //return false;
+    }
+
+    if (!CompileComputeShaderNIR(g_pd3dDevice)){
+        std::cerr << "Failed to compile NIR bitpack compute shader" << std::endl;
+        //return false;
+    }
+
+    if (!CompileComputeShaderUnpack(g_pd3dDevice)){
+        std::cerr << "Failed to compile VIS unpack compute shader" << std::endl;
+        //return false;
+    }
+
+    if (!CompileComputeShaderUnpackNIR(g_pd3dDevice)){
+        std::cerr << "Failed to compile NIR unpack compute shader" << std::endl;
         //return false;
     }
 
     if (!InitBitpackResources()){
         std::cerr << "Failed to initialize bitpack resources" << std::endl;
+        //return false;
+    }
+
+    if (!InitUnpackResources()){
+        std::cerr << "Failed to initialize unpack resources" << std::endl;
         //return false;
     }
 
@@ -1166,10 +1795,27 @@ void CleanupDeviceD3D()
 	if (g_pd3dDeviceContext) { g_pd3dDeviceContext->Release(); g_pd3dDeviceContext = nullptr; }
 	if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = nullptr; }
 	//// Compute shader cleanup
+	if (g_pSamplerNearest) { g_pSamplerNearest->Release(); g_pSamplerNearest = nullptr; }
 	if (g_pComputeShader) { g_pComputeShader->Release(); g_pComputeShader = nullptr; }
+	if (g_pComputeShaderNIR) { g_pComputeShaderNIR->Release(); g_pComputeShaderNIR = nullptr; }
+	if (g_pComputeShaderUnpack) { g_pComputeShaderUnpack->Release(); g_pComputeShaderUnpack = nullptr; }
+	if (g_pComputeShaderUnpackNIR) { g_pComputeShaderUnpackNIR->Release(); g_pComputeShaderUnpackNIR = nullptr; }
+	if (g_pInverseMapNIRSRV) { g_pInverseMapNIRSRV->Release(); g_pInverseMapNIRSRV = nullptr; }
+	if (g_pInverseMapNIRBuf) { g_pInverseMapNIRBuf->Release(); g_pInverseMapNIRBuf = nullptr; }
+	if (g_pInverseMapVISSRV) { g_pInverseMapVISSRV->Release(); g_pInverseMapVISSRV = nullptr; }
+	if (g_pInverseMapVISBuf) { g_pInverseMapVISBuf->Release(); g_pInverseMapVISBuf = nullptr; }
+	if (g_pUnpackOutStaging) { g_pUnpackOutStaging->Release(); g_pUnpackOutStaging = nullptr; }
+	if (g_pUnpackOutUAV) { g_pUnpackOutUAV->Release(); g_pUnpackOutUAV = nullptr; }
+	if (g_pUnpackOutBuffer) { g_pUnpackOutBuffer->Release(); g_pUnpackOutBuffer = nullptr; }
+	if (g_pUnpackInputSRV) { g_pUnpackInputSRV->Release(); g_pUnpackInputSRV = nullptr; }
+	if (g_pUnpackInputTex) { g_pUnpackInputTex->Release(); g_pUnpackInputTex = nullptr; }
 	if (pStagingTexture) { pStagingTexture->Release(); pStagingTexture = nullptr; }
 	if (g_pHologramUAV) { g_pHologramUAV->Release(); g_pHologramUAV = nullptr; }
 	if (pHologramTexture) { pHologramTexture->Release(); pHologramTexture = nullptr; }
+	if (g_pPhaseMapSRV) { g_pPhaseMapSRV->Release(); g_pPhaseMapSRV = nullptr; }
+	if (g_pPhaseMapBuffer) { g_pPhaseMapBuffer->Release(); g_pPhaseMapBuffer = nullptr; }
+	if (g_pLUTSRV) { g_pLUTSRV->Release(); g_pLUTSRV = nullptr; }
+	if (g_pLUTBuffer) { g_pLUTBuffer->Release(); g_pLUTBuffer = nullptr; }
 	if (g_pPhaseSRV) { g_pPhaseSRV->Release(); g_pPhaseSRV = nullptr; }
 	if (g_pPhaseBuffer) { g_pPhaseBuffer->Release(); g_pPhaseBuffer = nullptr; }
 	if (g_pConstantBuffer) { g_pConstantBuffer->Release(); g_pConstantBuffer = nullptr; }
@@ -1228,7 +1874,6 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-bool bitpackDebugInit = false;
 void DebugWindow(
 	bool show,
 	ImGuiIO& io
@@ -1244,6 +1889,143 @@ void DebugWindow(
 	}
 
 	if (!show) return;
+
+	// Phase preview state shared between Main/Debug tab previews.
+	// Picks which of the 24 holograms in the current frame slot to visualise.
+	static int phase_holo_idx = 0;
+
+	// Repaints the phase preview texture from phase_set for the currently
+	// displayed frame slot. Called on demand from the visible Phase tab so
+	// we don't pay the ~1 MB CPU cost when nothing is shown.
+	// Repaints the phase preview texture by unpacking the currently displayed
+	// bitpacked frame from frame_set. Caches the unpacked 24 phase planes so
+	// we only re-run the GPU unpack when the slot or the underlying frame data
+	// changes; the hologram-index slider only triggers the cheap byte-conversion
+	// repaint, not a full unpack.
+	auto update_phase_texture = [&]() {
+		if (!pPhaseTexture || frame_set.empty()) return;
+		const size_t per_holo = (size_t)N * (size_t)M;
+		const size_t slot     = (size_t)frame_order[frame_index % MAX_FRAMES];
+
+		static std::vector<float> unpacked;
+		unpacked.resize(per_holo * 24);
+		static int      last_slot         = -1;
+		static int      last_holo_idx     = -1;
+		static uint64_t last_frame_writes = (uint64_t)-1;
+
+		const uint64_t writes = frame_set_writes.load();
+		const bool slot_changed  = ((int)slot != last_slot);
+		const bool data_changed  = (writes != last_frame_writes);
+		const bool holo_changed  = (phase_holo_idx != last_holo_idx);
+
+		if (slot_changed || data_changed) {
+			// Unpack the bitpacked frame at the active slot.
+			const uint64_t holo_w = ActiveHologramWidthPx();
+			const uint64_t holo_h = ActiveHologramHeightPx();
+			const uint64_t frame_bytes = 4ULL * holo_w * holo_h;
+			if ((slot + 1) * frame_bytes > frame_set.size()) return;
+
+			unsigned char* src = frame_set.data() + slot * frame_bytes;
+			same_thread.store(true);
+			bool ok = IsNIRMode()
+				? UnpackHologramsNIRGPU(src, unpacked.data(), N, M, 24)
+				: UnpackHologramsGPU   (src, unpacked.data(), N, M, 24);
+			same_thread.store(false);
+			if (!ok) return;
+			last_slot         = (int)slot;
+			last_frame_writes = writes;
+		}
+
+		if (slot_changed || data_changed || holo_changed) {
+			const size_t base = (size_t)phase_holo_idx * per_holo;
+			if (base + per_holo > unpacked.size()) return;
+
+			D3D11_MAPPED_SUBRESOURCE mapped;
+			if (FAILED(g_pd3dDeviceContext->Map(pPhaseTexture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) return;
+			uint8_t* dst = (uint8_t*)mapped.pData;
+			for (uint64_t j = 0; j < (uint64_t)M; j++) {
+				uint8_t* row = dst + j * mapped.RowPitch;
+				const float* psrc = unpacked.data() + base + j * (size_t)N;
+				for (uint64_t i = 0; i < (uint64_t)N; i++) {
+					float p = psrc[i];
+					if (p < 0.0f) p = 0.0f; else if (p > 1.0f) p = 1.0f;
+					uint8_t v = (uint8_t)(p * 255.0f);
+					row[i * 4 + 0] = v;
+					row[i * 4 + 1] = v;
+					row[i * 4 + 2] = v;
+					row[i * 4 + 3] = 255;
+				}
+			}
+			g_pd3dDeviceContext->Unmap(pPhaseTexture, 0);
+			last_holo_idx = phase_holo_idx;
+		}
+	};
+
+	// Renders the Frame Preview content (zoom/pan sliders + Hologram/Phase tab bar).
+	// `id` disambiguates ImGui IDs between the Main and Debug preview instances.
+	// `zoom`, `pan_x`, `pan_y` come from the caller's static locals so each
+	// preview keeps independent zoom/pan state.
+	auto render_frame_preview = [&](const char* id, float& zoom, float& pan_x, float& pan_y) {
+		char label[64];
+		snprintf(label, sizeof(label), "Zoom##%s", id);
+		ImGui::SliderFloat(label, &zoom, 1.0f, 32.0f, "%.1fx");
+		const float view = 1.0f / zoom;
+		const float max_pan_x = 1.0f - view;
+		const float max_pan_y = 1.0f - view;
+		pan_x = clamp(pan_x, 0.0f, max_pan_x);
+		pan_y = clamp(pan_y, 0.0f, max_pan_y);
+		snprintf(label, sizeof(label), "Pan X##%s", id);
+		ImGui::SliderFloat(label, &pan_x, 0.0f, max_pan_x > 0.0f ? max_pan_x : 0.0f);
+		snprintf(label, sizeof(label), "Pan Y##%s", id);
+		ImGui::SliderFloat(label, &pan_y, 0.0f, max_pan_y > 0.0f ? max_pan_y : 0.0f);
+		const ImVec2 uv0(pan_x,        pan_y);
+		const ImVec2 uv1(pan_x + view, pan_y + view);
+
+		auto push_nearest = []() {
+			ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+				g_pd3dDeviceContext->PSSetSamplers(0, 1, &g_pSamplerNearest);
+			}, nullptr);
+		};
+		auto pop_nearest = []() {
+			ImGui::GetWindowDrawList()->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+		};
+
+		static bool match_scale = false;
+		if (IsNIRMode()){
+			ImGui::Checkbox("Match hologram <-> frame scale", &match_scale);
+		} else {
+			match_scale = false;
+		}
+
+		snprintf(label, sizeof(label), "PreviewTabs##%s", id);
+		if (!ImGui::BeginTabBar(label)) return;
+		if (ImGui::BeginTabItem("Hologram")) {
+			push_nearest();
+			ImGui::Image((void*)data_texture_srv,
+				ImVec2((float)ActiveHologramWidthPx() / (!match_scale ? 4.0f : 6.0f), (float)ActiveHologramHeightPx() / 4.0f),
+				uv0, uv1);
+			pop_nearest();
+			ImGui::Text("Top-left pixel: (%.0f, %.0f)",
+				pan_x * (float)ActiveHologramWidthPx(),
+				pan_y * (float)ActiveHologramHeightPx());
+			ImGui::EndTabItem();
+		}
+		if (!sequence_active && ImGui::BeginTabItem("Phase")) {
+			update_phase_texture();
+			push_nearest();
+			ImGui::Image((void*)phase_texture_srv,
+				ImVec2((float)N / 2.0f, (float)M / 2.0f),
+				uv0, uv1);
+			pop_nearest();
+			snprintf(label, sizeof(label), "Hologram (0-23)##%s", id);
+			ImGui::SliderInt(label, &phase_holo_idx, 0, 23);
+			ImGui::Text("Top-left pixel: (%.0f, %.0f)   greyscale = phase ∈ [0, 1]",
+				pan_x * (float)N,
+				pan_y * (float)M);
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
+	};
 
 	ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_None;
 
@@ -1262,6 +2044,7 @@ void DebugWindow(
 		ImGui::Text("Frametime %f ms (%f Hz)", 1000.0 * io.DeltaTime, io.Framerate);
 		ImGui::Text("Framerate needs to match PLM's");
 		ImGui::Text("Left: %d, Right: %d, Top: %d, Bottom: %d", monitorRect.left, monitorRect.right, monitorRect.top, monitorRect.bottom);
+		ImGui::Text("PLM type: %s", IsNIRMode() ? ".67 NIR alpha" : ".67 VIS");
 
 
 	#ifndef INCLUDE_LIGHTCRAFTER_WRAPPERS
@@ -1312,10 +2095,8 @@ void DebugWindow(
 
 		ImGui::SeparatorText("Frame Data");
 		if (ImGui::TreeNode("Frame on display")) {
-			static ImVec2 ulim = ImVec2(0.0f, 1.0f);
-			static ImVec2 vlim = ImVec2(0.0f, 1.0f);
-			ImGui::Image((void*)data_texture_srv, ImVec2((float)N / 4, (float)M / 4), ImVec2(ulim.x, vlim.x), ImVec2(ulim.y, vlim.y));
-			ImVec2 pos = ImGui::GetCursorScreenPos();
+			static float zoom = 1.0f, pan_x = 0.0f, pan_y = 0.0f;
+			render_frame_preview("main", zoom, pan_x, pan_y);
 			ImGui::TreePop();
 		};
 		ImGui::Text("Frame pointer [%p]", plm_image_ptr);
@@ -1331,49 +2112,157 @@ void DebugWindow(
 			frame_index = clamp(frame_index_i32, 0, MAX_FRAMES - 1);
 		};
 
-		static std::vector<float> phase(N * M * 24);
-		static std::vector<unsigned char> hologram(4 * 2 * N * 2 * M);
-
-		if (bitpackDebugInit == false) {
-			for (auto n = 0; n < 24; n++) {
-				for (auto j = 0; j < M; j++) {
-					for (auto i = 0; i < N; i++) {
-						phase[i + j * N + n * N * M] = (float) i / (float) N;
-					}
-				};
-			};
-			bitpackDebugInit = true;
-		};	
-
-		ImGui::SeparatorText("GPU Resources Initialization");
-		ImGui::Text("Compute Shader"); ImGui::SameLine(); BitGreen(g_pComputeShader != nullptr, false);
-		ImGui::Text("Constant Buffer:"); ImGui::SameLine(); BitGreen(g_pConstantBuffer != nullptr, false);
-		ImGui::Text("Phase Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseBuffer != nullptr, false);
-		ImGui::Text("LUT Buffer:"); ImGui::SameLine(); BitGreen(g_pLUTBuffer != nullptr, false);
-		ImGui::Text("Phase Map Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseMapBuffer != nullptr, false);
-		ImGui::Text("Hologram Texture:"); ImGui::SameLine(); BitGreen(pHologramTexture != nullptr, false);
-		ImGui::Text("Hologram UAV:"); ImGui::SameLine(); BitGreen(g_pHologramUAV != nullptr, false);
-		ImGui::Text("Staging Texture:"); ImGui::SameLine(); BitGreen(pStagingTexture != nullptr, false);
-
-		ImGui::SeparatorText("LUT");
-		ImGui::PlotLines("LUT", phases, 17);
-		// Display phase_map
-		if (ImGui::TreeNode("Phase map [0...15]: ")) {
-
-			for (int j = 0; j < 4; j++) {
-				for (int i = 0; i < 16; i++) {
-					Bit(phase_map[i * 4 + j], i < 15);
-				};
-			};
-			ImGui::TreePop();
-		};
-
+		// ── Stats ──────────────────────────────────────────────────────
 		ImGui::SeparatorText("Stats");
 		ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
 		ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
 		ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
 
 		ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Debug"))
+		{
+			// ── GPU Resources ─────────────────────────────────────────────
+			ImGui::SeparatorText("GPU Resources");
+			bool active_shader_ok = IsNIRMode() ? (g_pComputeShaderNIR != nullptr) : (g_pComputeShader != nullptr);
+			ImGui::Text("Active Compute Shader (%s):", IsNIRMode() ? "NIR" : "VIS");
+			ImGui::SameLine();
+			BitGreen(active_shader_ok, false);
+			if (!active_shader_ok) {
+				ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1),
+				                   "Bitpacking shader file failed to load. Is %s in the dll/wrapper folder?",
+				                   IsNIRMode() ? "BitpackHologramsNIR_CS.hlsl" : "BitpackHologramsCS.hlsl");
+			}
+			ImGui::Text("VIS Compute Shader:"); ImGui::SameLine(); BitGreen(g_pComputeShader != nullptr, false);
+			ImGui::Text("NIR Compute Shader:"); ImGui::SameLine(); BitGreen(g_pComputeShaderNIR != nullptr, false);
+			ImGui::Text("Constant Buffer:"); ImGui::SameLine(); BitGreen(g_pConstantBuffer != nullptr, false);
+			ImGui::Text("Phase Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseBuffer != nullptr, false);
+			ImGui::Text("Phase Map Buffer:"); ImGui::SameLine(); BitGreen(g_pPhaseMapBuffer != nullptr, false);
+			ImGui::Text("Hologram Texture:"); ImGui::SameLine(); BitGreen(pHologramTexture != nullptr, false);
+			ImGui::Text("Hologram UAV:"); ImGui::SameLine(); BitGreen(g_pHologramUAV != nullptr, false);
+			ImGui::Text("Staging Texture:"); ImGui::SameLine(); BitGreen(pStagingTexture != nullptr, false);
+
+			// Phase map
+			const int phase_levels = IsNIRMode() ? 32 : 16;
+			const int phase_cells  = IsNIRMode() ? 6 : 4;
+			char phase_map_label[64];
+			snprintf(phase_map_label, sizeof(phase_map_label), "Phase map [0...%d]:", phase_levels - 1);
+			if (ImGui::TreeNode(phase_map_label)) {
+				for (int j = 0; j < phase_cells; j++) {
+					for (int i = 0; i < phase_levels; i++) {
+						Bit(ActivePhaseMap()[i * phase_cells + j], i < (phase_levels - 1));
+					};
+				};
+				ImGui::TreePop();
+			};
+
+			// ── Frame Preview ──────────────────────────────────────────────
+			ImGui::SeparatorText("Frame Preview");
+			if (ImGui::TreeNode("Frame on display##dbg")) {
+				static float zoom = 1.0f, pan_x = 0.0f, pan_y = 0.0f;
+				render_frame_preview("dbg", zoom, pan_x, pan_y);
+				ImGui::TreePop();
+			}
+
+			// ── Test Pattern ───────────────────────────────────────────────
+			// All 24 holograms share a single N*M phase buffer (same_phase = true).
+			ImGui::SeparatorText("Test Pattern");
+
+			static int  test_mode  = 0;     // 0=Level, 1=Half at Level, 2=Blazed grating
+			static int  debug_level = 0;
+			static int  half_idx   = 0;     // 0=Top, 1=Bottom, 2=Left, 3=Right
+			static float kx        = 0.0f;
+			static float ky        = 0.0f;
+
+			const char* test_modes[] = { "Level", "Half at Level", "Blazed grating" };
+			bool dirty = ImGui::Combo("Pattern", &test_mode, test_modes, IM_ARRAYSIZE(test_modes));
+
+			const int max_level = IsNIRMode() ? 31 : 15;
+
+			if (test_mode == 0 || test_mode == 1) {
+				dirty |= ImGui::SliderInt("Phase Level", &debug_level, 0, max_level);
+				if (IsNIRMode()) {
+					ImGui::Text("Odd col ref: %.4f  |  Even col ref: %.4f",
+						nir_phases_odd[debug_level], nir_phases_even[debug_level]);
+				}
+			}
+			if (test_mode == 1) {
+				const char* halves[] = { "Top", "Bottom", "Left", "Right" };
+				dirty |= ImGui::Combo("Half", &half_idx, halves, IM_ARRAYSIZE(halves));
+			}
+			if (test_mode == 2) {
+				dirty |= ImGui::SliderFloat("kx", &kx, -0.1f, 0.1f, "%.4f");
+				dirty |= ImGui::SliderFloat("ky", &ky, -0.1f, 0.1f, "%.4f");
+			}
+
+			if (dirty) {
+				static std::vector<float> single_phase;
+				single_phase.resize((size_t)N * M);
+
+				auto level_phase = [&](uint64_t i) -> float {
+					if (IsNIRMode()) {
+						int col_parity = i % 2;
+						return (col_parity == 0)
+							? nir_phases_odd[debug_level]
+							: nir_phases_even[debug_level];
+					}
+					return (debug_level + 0.5f) / 16.0f;
+				};
+
+				if (test_mode == 0) {
+					// Level: uniform fill (per-column for NIR)
+					for (uint64_t j = 0; j < (uint64_t)M; j++)
+						for (uint64_t i = 0; i < (uint64_t)N; i++)
+							single_phase[i + j * N] = level_phase(i);
+				}
+				else if (test_mode == 1) {
+					// Half at level: chosen half pistoned to level, other half phase 0
+					const uint64_t halfM = (uint64_t)M / 2;
+					const uint64_t halfN = (uint64_t)N / 2;
+					for (uint64_t j = 0; j < (uint64_t)M; j++) {
+						for (uint64_t i = 0; i < (uint64_t)N; i++) {
+							bool in_half = false;
+							switch (half_idx) {
+								case 0: in_half = (j <  halfM); break;  // Top
+								case 1: in_half = (j >= halfM); break;  // Bottom
+								case 2: in_half = (i <  halfN); break;  // Left
+								case 3: in_half = (i >= halfN); break;  // Right
+							}
+							single_phase[i + j * N] = in_half ? level_phase(i) : 0.0f;
+						}
+					}
+				}
+				else {
+					// Blazed grating centred at array centre (where the beam reflects)
+					// phase = frac(kx*(i - N/2) + ky*(j - M/2)), kx/ky in cycles per pixel
+					const float cx = 0.5f * (float)N;
+					const float cy = 0.5f * (float)M;
+					for (uint64_t j = 0; j < (uint64_t)M; j++) {
+						for (uint64_t i = 0; i < (uint64_t)N; i++) {
+							float p = kx * ((float)i - cx) + ky * ((float)j - cy);
+							single_phase[i + j * N] = p - floorf(p);
+						}
+					}
+				}
+
+				// BitpackAndInsert*GPU writes the bitpacked frame into slot 0 and
+				// captures `single_phase` into phase_set for the Phase preview tab.
+				same_thread.store(true);
+				if (IsNIRMode())
+					BitpackAndInsertNIRGPU(single_phase.data(), N, M, 24, 0, true);
+				else
+					BitpackAndInsertGPU(single_phase.data(), N, M, 24, 0, true);
+				same_thread.store(false);
+
+			}
+
+			// ── Stats ──────────────────────────────────────────────────────
+			ImGui::SeparatorText("Stats");
+			ImGui::Text("UI Content: %f ms", elapsed_content.count() * 1000);
+			ImGui::Text("Buffer Swap: %f ms", elapsed_buffer.count() * 1000);
+			ImGui::Text("Total: %f ms", elapsed_total.count() * 1000);
+
+			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("PLM connection"))
 		{
@@ -1558,7 +2447,7 @@ void DebugWindow(
 #ifdef PLM_DEBUG
 int main() {
 
-	SetPLMWindowPos(1358, 800, 1920);
+	SetPLMWindowPos(904, 800, 2560);
 	SetWindowed(true);
 	StartUI(MAX_FRAMES);
 
