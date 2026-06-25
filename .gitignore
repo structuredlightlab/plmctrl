@@ -52,3 +52,4 @@
 /bin/*.lib
 /bin/*.pdb
 
+/dist*

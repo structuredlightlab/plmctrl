@@ -50,6 +50,7 @@ plm.BitpackHologramsGPUPtr = @BitpackHologramsGPUPtr;
 plm.BitpackAndInsertGPU = @BitpackAndInsertGPU;
 plm.BitpackAndInsertNIRGPU = @BitpackAndInsertNIRGPU;
 plm.SetWindowedMode = @SetWindowed;
+plm.ShowDebugPanel = @ShowDebugPanel;
 plm.Cleanup = @cleanup;                  % Unload the library and cleanup resources
 
 % PLM configuring functions
@@ -102,6 +103,11 @@ plm.Configure = @Configure;
     function SetWindowed(windowed_mode)
         % Insert the holograms into the PLM at the specified offset
         calllib('plmctrl', 'SetWindowed', windowed_mode);
+    end
+
+    function ShowDebugPanel(show)
+        % Show or hide the debug panel in the UI
+        calllib('plmctrl', 'ShowDebugPanel', logical(show));
     end
 
     function SetFrameSequence(sequence)

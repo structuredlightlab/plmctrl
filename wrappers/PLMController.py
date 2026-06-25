@@ -12,11 +12,11 @@ class PLMController:
         """
         Initialize the PLMController. Two call styles are supported:
 
-        Model-based (preferred):
+        Model-based :
             PLMController(model, dll_path='plmctrl.dll', x0=1920, y0=0, MAX_FRAMES=120)
             where model is one of '.67NIR', '.67VIS'.
 
-        Legacy explicit-dimensions:
+        explicit-dimensions:
             PLMController(MAX_FRAMES, width, height, dll_path='plmctrl.dll', x0=1920, y0=0)
         """
         if args and isinstance(args[0], str):
@@ -51,6 +51,7 @@ class PLMController:
         self.lib.SetPhaseMap.argtypes = [ctypes.POINTER(ctypes.c_int32)]
         self.lib.SetPhaseMapNIR.argtypes = [ctypes.POINTER(ctypes.c_int32)]
         self.lib.SetWindowed.argtypes = [ctypes.c_bool]
+        self.lib.ShowDebugPanel.argtypes = [ctypes.c_bool]
         self.lib.SetPhaseMap.restype = ctypes.c_int
         self.lib.SetPhaseMapNIR.restype = ctypes.c_int
         self.lib.GetPLMType.argtypes = []
@@ -141,6 +142,13 @@ class PLMController:
     
         self.lib.SetWindowed(windowed)
 
+    def show_debug_panel(self, show):
+        """Show or hide the debug panel in the UI."""
+        if not isinstance(show, bool):
+            raise ValueError("show must be a boolean value")
+
+        self.lib.ShowDebugPanel(show)
+
     def insert_frames(self, frames, offset, format):
         """
         Insert RGB bitpacked hologram frames into the plmctrl's sequence.
@@ -208,13 +216,6 @@ class PLMController:
         """Stop the PLM UI."""
         self.lib.StopUI()
         
-    def play(self):
-        """Equivalent to pressing the Play button on PLM UI."""
-        self.lib.Play()
-        
-    def stop(self):
-        """Equivalent to pressing the Stop button on PLM UI."""
-        self.lib.Stop()
 
     def set_frame(self, frame):
         """Set a specific frame to display."""

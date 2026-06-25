@@ -2,7 +2,7 @@
  * PLMCtrl - Phase-only Light Modulator Control Library
  * Structured Light Lab
  * Version: 1.0.0
- * Date: 30/Apr/2026
+ * Date: 25/June/2026
  * Repository : https://github.com/structuredlightlab/plmctrl
  *
  * plmctrl is an open-source library for controlling the 0.67" Texas Instruments
@@ -33,7 +33,7 @@
 
 
 // To be defined if compiled as an executable
-#define PLM_DEBUG
+//#define PLM_DEBUG
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -52,11 +52,13 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <cstring>
 
 #include "PLM/PLM.h"
 #include "plmctrl.h"
 
 #include "helpers.h"
+#include "shaders_embedded.h"
 
 // DirectX Stuff
 static ID3D11Device* g_pd3dDevice = nullptr;
@@ -249,23 +251,27 @@ int nir_phase_map[192] = {
 
 // VIS phase map: 16 levels x 4 cells
 // TI DLP6750 VIS
+// Default VIS phase map: 16 levels x 4 cells. This is the natural binary
+// phase map reindexed by phase_map_order = (12, 8, 4, 14, 0, 6, 10, 2, 13, 5,
+// 9, 1, 15, 7, 11, 3), so the correct ordering is already in place even if the
+// user never calls SetPhaseMap. (base row = the unordered binary code per level.)
 int vis_phase_map[64] = {
-	0,0,1,1,  // l=0  → 0011 → Phase State  1 (0.00%)
-	0,0,0,1,  // l=1  → 0001 → Phase State  3 (2.58%)
-	0,0,1,0,  // l=2  →  → Phase State  2 (1.26%)
-	1,0,1,1,  // l=3  →  → Phase State  4 (4.94%)
-	0,0,0,0,  // l=4  →  → Phase State  5 (7.09%)
-	1,0,0,1,  // l=5  →  → Phase State  6 (8.78%)
-	1,0,1,0,  // l=6  →  → Phase State  7 (13.81%)
-	1,0,0,0,  // l=7  →  → Phase State  8 (21.53%)
-	0,1,1,1,  // l=8  →  → Phase State  9 (32.74%)
-	0,1,0,1,  // l=9  →  → Phase State 10 (36.10%)
-	0,1,1,0,  // l=10 →  → Phase State 11 (42.03%)
-	0,1,0,0,  // l=11 →  → Phase State 12 (50.45%)
-	1,1,1,1,  // l=12 →  → Phase State 13 (59.16%)
-	1,1,0,1,  // l=13 →  → Phase State 14 (67.29%)
-	1,1,1,0,  // l=14 →  → Phase State 15 (82.54%)
-	1,1,0,0,  // l=15 →  → Phase State 16 (100.00%)
+	0,0,1,1,  // l=0  (base row 12)
+	0,0,0,1,  // l=1  (base row 8)
+	0,0,1,0,  // l=2  (base row 4)
+	0,1,1,1,  // l=3  (base row 14)
+	0,0,0,0,  // l=4  (base row 0)
+	0,1,1,0,  // l=5  (base row 6)
+	0,1,0,1,  // l=6  (base row 10)
+	0,1,0,0,  // l=7  (base row 2)
+	1,0,1,1,  // l=8  (base row 13)
+	1,0,1,0,  // l=9  (base row 5)
+	1,0,0,1,  // l=10 (base row 9)
+	1,0,0,0,  // l=11 (base row 1)
+	1,1,1,1,  // l=12 (base row 15)
+	1,1,1,0,  // l=13 (base row 7)
+	1,1,0,1,  // l=14 (base row 11)
+	1,1,0,0,  // l=15 (base row 3)
 };
 
 
@@ -284,13 +290,17 @@ void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void DebugWindow(bool show, ImGuiIO& io);
 
-bool CompileComputeShaderFromFile(ID3D11Device* device, const wchar_t* filename, ID3D11ComputeShader** ppShader)
+
+// The shader sources are embedded directly in the binary (see shaders_embedded.h)
+bool CompileComputeShaderFromSource(ID3D11Device* device, const char* source, const char* name, ID3D11ComputeShader** ppShader)
 {
 	ID3DBlob* pBlob = nullptr;
 	ID3DBlob* pErrorBlob = nullptr;
 
-	HRESULT hr = D3DCompileFromFile(
-		filename,
+	HRESULT hr = D3DCompile(
+		source,
+		strlen(source),
+		name,           // source name shown in error messages
 		nullptr,
 		nullptr,
 		"main",
@@ -303,9 +313,9 @@ bool CompileComputeShaderFromFile(ID3D11Device* device, const wchar_t* filename,
 
 	if (FAILED(hr))
 	{
+		std::cerr << "Compute Shader Compilation Error (" << name << "):" << std::endl;
 		if (pErrorBlob)
 		{
-			std::cerr << "Compute Shader Compilation Error (" << std::endl;
 			std::cerr << (char*)pErrorBlob->GetBufferPointer() << std::endl;
 			pErrorBlob->Release();
 		}
@@ -339,22 +349,22 @@ bool CompileComputeShaderFromFile(ID3D11Device* device, const wchar_t* filename,
 
 bool CompileComputeShader(ID3D11Device* device)
 {
-	return CompileComputeShaderFromFile(device, L"BitpackHologramsCS.hlsl", &g_pComputeShader);
+	return CompileComputeShaderFromSource(device, plm_shaders::BitpackHologramsCS, "BitpackHologramsCS", &g_pComputeShader);
 };
 
 bool CompileComputeShaderNIR(ID3D11Device* device)
 {
-	return CompileComputeShaderFromFile(device, L"BitpackHologramsNIR_CS.hlsl", &g_pComputeShaderNIR);
+	return CompileComputeShaderFromSource(device, plm_shaders::BitpackHologramsNIR_CS, "BitpackHologramsNIR_CS", &g_pComputeShaderNIR);
 };
 
 bool CompileComputeShaderUnpack(ID3D11Device* device)
 {
-	return CompileComputeShaderFromFile(device, L"UnpackHologramsCS.hlsl", &g_pComputeShaderUnpack);
+	return CompileComputeShaderFromSource(device, plm_shaders::UnpackHologramsCS, "UnpackHologramsCS", &g_pComputeShaderUnpack);
 };
 
 bool CompileComputeShaderUnpackNIR(ID3D11Device* device)
 {
-	return CompileComputeShaderFromFile(device, L"UnpackHologramsNIR_CS.hlsl", &g_pComputeShaderUnpackNIR);
+	return CompileComputeShaderFromSource(device, plm_shaders::UnpackHologramsNIR_CS, "UnpackHologramsNIR_CS", &g_pComputeShaderUnpackNIR);
 };
 
 bool InitBitpackResources()
@@ -886,7 +896,9 @@ int UI(){
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
-	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewport / Platform Windows
+	if (show_debug_window){
+		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;  // Enable Multi-Viewport / Platform Windows
+	}
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 	//io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
@@ -1205,6 +1217,10 @@ void StopUI() {
 
 void SetWindowed(bool windowed_mode) {
 	windowed = windowed_mode;
+};
+
+void ShowDebugPanel(bool show) {
+	show_debug_window = show;
 };
 
 void SetPLMWindowPos(int width, int height, int x0 = 0, int y0 = 0 ) {
@@ -1754,6 +1770,19 @@ bool CreateDeviceD3D(HWND hWnd)
 		return false;
 
 	std::cout << "Feature Level: " << std::hex << featureLevel << std::dec << std::endl;
+
+	// UNTESTED IN THE LAB.
+	// // Minimise present latency: cap the driver's render-ahead queue to a single
+	// // frame so the frame we build is the one scanned out at the next vblank,
+	// // instead of sitting behind 1-2 already-queued frames (~2 frame delay).
+	// {
+	// 	IDXGIDevice1* dxgiDevice = nullptr;
+	// 	if (SUCCEEDED(g_pd3dDevice->QueryInterface(__uuidof(IDXGIDevice1), (void**)&dxgiDevice)) && dxgiDevice) {
+	// 		dxgiDevice->SetMaximumFrameLatency(1);
+	// 		dxgiDevice->Release();
+	// 	}
+	// }
+
 	CreateRenderTarget();
 
     if (!CompileComputeShader(g_pd3dDevice)){
@@ -2130,8 +2159,8 @@ void DebugWindow(
 			BitGreen(active_shader_ok, false);
 			if (!active_shader_ok) {
 				ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1),
-				                   "Bitpacking shader file failed to load. Is %s in the dll/wrapper folder?",
-				                   IsNIRMode() ? "BitpackHologramsNIR_CS.hlsl" : "BitpackHologramsCS.hlsl");
+				                   "Bitpacking shader (%s) failed to compile. See stderr for details.",
+				                   IsNIRMode() ? "BitpackHologramsNIR_CS" : "BitpackHologramsCS");
 			}
 			ImGui::Text("VIS Compute Shader:"); ImGui::SameLine(); BitGreen(g_pComputeShader != nullptr, false);
 			ImGui::Text("NIR Compute Shader:"); ImGui::SameLine(); BitGreen(g_pComputeShaderNIR != nullptr, false);
