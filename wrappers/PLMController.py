@@ -1,11 +1,19 @@
 import ctypes
 import numpy as np
 import time
+import warnings
 
 class PLMController:
+    NIR_ALPHA = 0
+    NIR_GAMMA = 1
+    NIR_VARIANTS = {
+        'alpha': NIR_ALPHA,
+        'gamma': NIR_GAMMA,
+    }
     PLM_MODELS = {
-        '.67NIR': (904, 800),
-        '.67VIS': (1358, 800),
+        '.67NIRalpha': (904, 800, NIR_ALPHA),
+        '.67NIRgamma': (904, 800, NIR_GAMMA),
+        '.67VIS': (1358, 800, None),
     }
 
     def __init__(self, *args, **kwargs):
@@ -14,16 +22,19 @@ class PLMController:
 
         Model-based :
             PLMController(model, dll_path='plmctrl.dll', x0=1920, y0=0, MAX_FRAMES=120)
-            where model is one of '.67NIR', '.67VIS'.
+            where model is one of '.67NIRalpha', '.67NIRgamma', '.67VIS'.
 
         explicit-dimensions:
             PLMController(MAX_FRAMES, width, height, dll_path='plmctrl.dll', x0=1920, y0=0)
         """
+        requested_nir_variant = None
+
         if args and isinstance(args[0], str):
             model = args[0]
             if model not in self.PLM_MODELS:
                 raise ValueError(f"Unknown PLM model {model!r}. Known: {list(self.PLM_MODELS)}")
-            self.N, self.M = self.PLM_MODELS[model]
+            self.N, self.M, requested_nir_variant = self.PLM_MODELS[model]
+            requested_nir_variant = kwargs.pop('nir_variant', requested_nir_variant)
             dll_path     = args[1] if len(args) > 1 else kwargs.pop('dll_path', 'plmctrl.dll')
             self.x0      = args[2] if len(args) > 2 else kwargs.pop('x0', 1920)
             self.y0      = args[3] if len(args) > 3 else kwargs.pop('y0', 0)
@@ -36,6 +47,7 @@ class PLMController:
             dll_path        = args[3]      if len(args) > 3 else kwargs.pop('dll_path', 'plmctrl.dll')
             self.x0         = args[4]      if len(args) > 4 else kwargs.pop('x0', 1920)
             self.y0         = args[5]      if len(args) > 5 else kwargs.pop('y0', 0)
+            requested_nir_variant = kwargs.pop('nir_variant', None)
 
         # Load the 'plmctrl' library
         self.lib = ctypes.CDLL(dll_path)
@@ -50,10 +62,12 @@ class PLMController:
         self.lib.SetPLMFrame.argtypes = [ctypes.c_int]
         self.lib.SetPhaseMap.argtypes = [ctypes.POINTER(ctypes.c_int32)]
         self.lib.SetPhaseMapNIR.argtypes = [ctypes.POINTER(ctypes.c_int32)]
+        self.lib.SetNIRVariant.argtypes = [ctypes.c_int]
         self.lib.SetWindowed.argtypes = [ctypes.c_bool]
         self.lib.ShowDebugPanel.argtypes = [ctypes.c_bool]
         self.lib.SetPhaseMap.restype = ctypes.c_int
         self.lib.SetPhaseMapNIR.restype = ctypes.c_int
+        self.lib.SetNIRVariant.restype = ctypes.c_bool
         self.lib.GetPLMType.argtypes = []
         self.lib.GetPLMType.restype = ctypes.c_int
         self.lib.BitpackHolograms.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint8),
@@ -102,6 +116,13 @@ class PLMController:
         # then read it back. is_nir drives bitpack dispatch and frame shape.
         self.lib.SetPLMWindowPos(self.N, self.M, self.x0, self.y0)
         self.is_nir = bool(self.lib.GetPLMType())
+        self.nir_variant = None
+        self.nir_variant_name = None
+        if self.is_nir:
+            variant = self.NIR_ALPHA if requested_nir_variant is None else requested_nir_variant
+            self.set_nir_variant(variant)
+        elif requested_nir_variant is not None:
+            raise ValueError("NIR variant can only be set for NIR PLM models")
 
     @property
     def frame_shape(self):
@@ -148,6 +169,38 @@ class PLMController:
             raise ValueError("show must be a boolean value")
 
         self.lib.ShowDebugPanel(show)
+
+    @classmethod
+    def _normalize_nir_variant(cls, variant):
+        if isinstance(variant, bool):
+            raise ValueError("NIR variant must be 'alpha', 'gamma', 0, or 1")
+        if isinstance(variant, int):
+            variant_id = variant
+        elif isinstance(variant, str):
+            key = variant.strip().lower().replace(' ', '').replace('_', '').replace('-', '')
+            if key not in cls.NIR_VARIANTS:
+                raise ValueError("NIR variant must be 'alpha', 'gamma', 0, or 1")
+            variant_id = cls.NIR_VARIANTS[key]
+        else:
+            raise ValueError("NIR variant must be 'alpha', 'gamma', 0, or 1")
+
+        if variant_id not in (cls.NIR_ALPHA, cls.NIR_GAMMA):
+            raise ValueError("NIR variant must be 'alpha', 'gamma', 0, or 1")
+        return variant_id
+
+    def set_nir_variant(self, variant):
+        """Set the NIR PLM variant: 'alpha' uses odd/even column LUTs; 'gamma' uses one shared LUT."""
+        if not self.is_nir:
+            raise ValueError("NIR variant can only be set for NIR PLM models")
+
+        variant_id = self._normalize_nir_variant(variant)
+        res = self.lib.SetNIRVariant(ctypes.c_int(variant_id))
+        if not res:
+            raise ValueError("NIR variant must be 'alpha', 'gamma', 0, or 1")
+
+        self.nir_variant = variant_id
+        self.nir_variant_name = 'gamma' if variant_id == self.NIR_GAMMA else 'alpha'
+        return bool(res)
 
     def insert_frames(self, frames, offset, format):
         """

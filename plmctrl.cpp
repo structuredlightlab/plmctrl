@@ -80,7 +80,7 @@ static ID3D11ComputeShader* g_pComputeShaderUnpack = nullptr;     // VIS unpack
 static ID3D11ComputeShader* g_pComputeShaderUnpackNIR = nullptr;  // NIR unpack
 static ID3D11Buffer* g_pConstantBuffer = nullptr;
 static ID3D11Buffer* g_pPhaseBuffer = nullptr;
-static ID3D11Buffer* g_pLUTBuffer = nullptr;       // phase LUT: 17 floats for VIS, 64 floats (odd+even) for NIR
+static ID3D11Buffer* g_pLUTBuffer = nullptr;       // phase LUT: 17 floats for VIS, 64 floats (odd+even/shared) for NIR
 static ID3D11Buffer* g_pPhaseMapBuffer = nullptr;
 
 // Unpack pipeline: input bitpacked frame, output phase float buffer + readback,
@@ -140,6 +140,7 @@ enum PLM_TYPE {
 };
 
 PLM_TYPE plm_type = VIS;
+NIRVariant nir_variant = NIR_ALPHA;
 inline bool IsNIRMode() {
 	return plm_type == NIR;
 }
@@ -210,6 +211,34 @@ const float nir_phases_even[32] = {
 	0.3911f, 0.4178f, 0.4586f, 0.5121f, 0.5134f, 0.5414f, 0.5809f, 0.6357f,
 	0.6255f, 0.6713f, 0.7350f, 0.8127f, 0.8038f, 0.8446f, 0.9057f, 0.9822f
 };
+
+// NIR Gamma phase levels: one LUT shared by odd/even columns.
+const float nir_phases_gamma[32] = {
+	0.0000f, 0.0161f, 0.0337f, 0.0718f, 0.0528f, 0.0718f, 0.0909f, 0.1334f,
+	0.1452f, 0.1877f, 0.2243f, 0.2947f, 0.2595f, 0.3050f, 0.3416f, 0.4120f,
+	0.3959f, 0.4311f, 0.4765f, 0.5411f, 0.5205f, 0.5572f, 0.6041f, 0.6701f,
+	0.6276f, 0.6833f, 0.7522f, 0.8402f, 0.7991f, 0.8519f, 0.9223f, 1.0000f
+};
+
+inline const float* ActiveNIRPhasesOdd() {
+	return (nir_variant == NIR_GAMMA) ? nir_phases_gamma : nir_phases_odd;
+}
+
+inline const float* ActiveNIRPhasesEven() {
+	return (nir_variant == NIR_GAMMA) ? nir_phases_gamma : nir_phases_even;
+}
+
+inline const char* ActiveNIRVariantLabel() {
+	return (nir_variant == NIR_GAMMA) ? ".67 NIR gamma" : ".67 NIR alpha";
+}
+
+static void UploadActiveNIRLUT() {
+	D3D11_BOX box;
+	box = { 0, 0, 0, (UINT)(sizeof(float) * 32), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, ActiveNIRPhasesOdd(), 0, 0);
+	box = { (UINT)(sizeof(float) * 32), 0, 0, (UINT)(sizeof(float) * 64), 1, 1 };
+	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, ActiveNIRPhasesEven(), 0, 0);
+}
 
 // NIR Alpha phase map: 32 levels x 6 cells
 // Cell order: k=0 bottom-left, k=1 top-left, k=2 bottom-mid, k=3 top-mid, k=4 bottom-right, k=5 top-right
@@ -414,7 +443,7 @@ bool InitBitpackResources()
 	}
 
 
-	// NIR LUT buffer: 64 floats (odd[0..31] + even[32..63])
+	// NIR LUT buffer: 64 floats (odd[0..31] + even[32..63], or gamma duplicated)
 	bufDesc = {};
 	bufDesc.ByteWidth = sizeof(float) * 64;
 	bufDesc.Usage = D3D11_USAGE_DEFAULT;
@@ -738,12 +767,8 @@ bool UnpackHologramsNIRGPU(
 	cp.phase_stride = (uint32_t)(N_in * M_in);
 	g_pd3dDeviceContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &cp, 0, 0);
 
-	// Refresh per-column LUT (reuses bitpacker buffer); cheap (256 bytes total).
-	D3D11_BOX box;
-	box = { 0, 0, 0, (UINT)(sizeof(float) * 32), 1, 1 };
-	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, nir_phases_odd, 0, 0);
-	box = { (UINT)(sizeof(float) * 32), 0, 0, (UINT)(sizeof(float) * 64), 1, 1 };
-	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, nir_phases_even, 0, 0);
+	// Refresh active NIR LUT. Alpha uses odd/even LUTs; gamma uploads the same LUT twice.
+	UploadActiveNIRLUT();
 
 	int inv[64];
 	BuildInverseMapNIR(inv);
@@ -1256,6 +1281,17 @@ int GetPLMType() {
 	return (int)plm_type;
 }
 
+bool SetNIRVariant(int variant) {
+
+	if (variant != NIR_ALPHA && variant != NIR_GAMMA) {
+		return false;
+	}
+
+	nir_variant = (NIRVariant)variant;
+	plm_type = NIR;
+	return true;
+}
+
 bool SetPhaseMapNIR(int* new_phase_map) {
 	plm_type = NIR;
 	// NIR: 32 levels x 6 cells per 3x2 superpixel = 192 entries
@@ -1368,7 +1404,7 @@ unsigned int QuantisePhase(float phaseVal) {
 
 unsigned int QuantisePhaseNIR(float phaseVal, int col_parity) {
 	// col_parity: 0 = odd column (1-indexed), 1 = even column (1-indexed)
-	const float* lut = (col_parity == 0) ? nir_phases_odd : nir_phases_even;
+	const float* lut = (col_parity == 0) ? ActiveNIRPhasesOdd() : ActiveNIRPhasesEven();
 	float min_dist = 2.0f;
 	unsigned int best_level = 0;
 	for (int l = 0; l < 32; l++) {
@@ -1663,12 +1699,9 @@ bool BitpackHologramsNIRGPU(
 	constant.phase_stride = same_phase ? 0u : (uint32_t)(N * M);
 	g_pd3dDeviceContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &constant, 0, 0);
 
-	D3D11_BOX box;
-	box = { 0, 0, 0, (UINT)(sizeof(float) * 32), 1, 1 };
-	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, nir_phases_odd, 0, 0);
-	box = { (UINT)(sizeof(float) * 32), 0, 0, (UINT)(sizeof(float) * 64), 1, 1 };
-	g_pd3dDeviceContext->UpdateSubresource(g_pLUTBuffer, 0, &box, nir_phases_even, 0, 0);
+	UploadActiveNIRLUT();
 
+	D3D11_BOX box;
 	box = { 0, 0, 0, (UINT)(sizeof(int) * 192), 1, 1 };
 	g_pd3dDeviceContext->UpdateSubresource(g_pPhaseMapBuffer, 0, &box, nir_phase_map, 0, 0);
 
@@ -2073,7 +2106,7 @@ void DebugWindow(
 		ImGui::Text("Frametime %f ms (%f Hz)", 1000.0 * io.DeltaTime, io.Framerate);
 		ImGui::Text("Framerate needs to match PLM's");
 		ImGui::Text("Left: %d, Right: %d, Top: %d, Bottom: %d", monitorRect.left, monitorRect.right, monitorRect.top, monitorRect.bottom);
-		ImGui::Text("PLM type: %s", IsNIRMode() ? ".67 NIR alpha" : ".67 VIS");
+		ImGui::Text("PLM type: %s", IsNIRMode() ? ActiveNIRVariantLabel() : ".67 VIS");
 
 
 	#ifndef INCLUDE_LIGHTCRAFTER_WRAPPERS
@@ -2212,7 +2245,7 @@ void DebugWindow(
 				dirty |= ImGui::SliderInt("Phase Level", &debug_level, 0, max_level);
 				if (IsNIRMode()) {
 					ImGui::Text("Odd col ref: %.4f  |  Even col ref: %.4f",
-						nir_phases_odd[debug_level], nir_phases_even[debug_level]);
+						ActiveNIRPhasesOdd()[debug_level], ActiveNIRPhasesEven()[debug_level]);
 				}
 			}
 			if (test_mode == 1) {
@@ -2231,9 +2264,8 @@ void DebugWindow(
 				auto level_phase = [&](uint64_t i) -> float {
 					if (IsNIRMode()) {
 						int col_parity = i % 2;
-						return (col_parity == 0)
-							? nir_phases_odd[debug_level]
-							: nir_phases_even[debug_level];
+						const float* lut = (col_parity == 0) ? ActiveNIRPhasesOdd() : ActiveNIRPhasesEven();
+						return lut[debug_level];
 					}
 					return (debug_level + 0.5f) / 16.0f;
 				};

@@ -1,6 +1,6 @@
 //#define STATIC_LIB
 
-#ifdef DLL_EXPORTS
+#if defined(DLL_EXPORTS) || defined(DLL2_EXPORTS)
 #define PLM_API __declspec(dllexport)
 #elif defined(STATIC_LIB)
 #define PLM_API
@@ -11,6 +11,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+	typedef enum NIRVariant {
+		NIR_ALPHA = 0,
+		NIR_GAMMA = 1
+	} NIRVariant;
+
 	PLM_API void StartUI(unsigned int number_of_frames);
 	PLM_API void StopUI();
 	PLM_API bool PauseUI();
@@ -69,7 +74,8 @@ extern "C" {
 	// `frame` is the bitpacked RGBA8 buffer (2N × 2M for VIS, (3N+4) × 2M for NIR).
 	// `phase` receives N*M*num_holograms floats — the quantised phase recovered
 	// per hologram. VIS returns bin-centre phases ((level + 0.5) / 16);
-	// NIR returns the per-column-parity LUT phase (matches what the device produces).
+	// NIR returns the active variant LUT phase. Alpha is per-column-parity;
+	// gamma uses one LUT for both column parities.
 	PLM_API bool UnpackHologramsGPU(
 		unsigned char* frame,
 		float* phase,
@@ -83,8 +89,9 @@ extern "C" {
 		unsigned long long M,
 		int num_holograms);
 	PLM_API bool SetPhaseMapNIR(int* new_phase_map);
+	PLM_API bool SetNIRVariant(int variant);
 	// Returns 0 for VIS, 1 for NIR. Reflects the type inferred by SetPLMWindowPos
-	// (N=1358 → VIS, N=904 → NIR) or the most recent SetPhaseMap*/Bitpack* call.
+	// (N=1358 → VIS, N=904 → NIR) or the most recent SetPhaseMap*/SetNIRVariant/Bitpack* call.
 	PLM_API int GetPLMType();
 	PLM_API bool SetFrameSequence(unsigned long long*, unsigned long long length);
 	PLM_API bool SetPLMFrame(unsigned long long offset);

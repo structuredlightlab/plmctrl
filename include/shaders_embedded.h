@@ -80,7 +80,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 )HLSL";
 
 
-// NIR bitpacker: 3x2 superpixel, 32-level per-column-parity quantisation.
+// NIR bitpacker: 3x2 superpixel, 32-level active-variant quantisation.
 static const char* const BitpackHologramsNIR_CS = R"HLSL(
 cbuffer Constants : register(b0)
 {
@@ -91,7 +91,7 @@ cbuffer Constants : register(b0)
 };
 
 StructuredBuffer<float> phase : register(t0);
-StructuredBuffer<float> phases : register(t1);     // [0..31] odd-col LUT, [32..63] even-col LUT
+StructuredBuffer<float> phases : register(t1);     // [0..31] odd-col LUT, [32..63] even-col LUT; gamma stores the same LUT twice
 StructuredBuffer<int> phase_map : register(t2);    // 32 levels x 6 cells per 3x2 superpixel
 
 RWTexture2D<uint> hologram : register(u0);
@@ -226,7 +226,7 @@ cbuffer Constants : register(b0)
 };
 
 Texture2D<uint>           bitpacked       : register(t0);   // R32_UINT, (3N+4) x 2M
-StructuredBuffer<float>   phases          : register(t1);   // 64 floats: odd[0..31] | even[32..63]
+StructuredBuffer<float>   phases          : register(t1);   // 64 floats: odd[0..31] | even[32..63]; gamma stores the same LUT twice
 StructuredBuffer<int>     level_from_code : register(t2);   // 64 entries; -1 marks invalid
 
 RWStructuredBuffer<float> phase_out       : register(u0);   // size N*M*num_holograms
